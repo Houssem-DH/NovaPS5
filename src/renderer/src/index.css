@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 6% 7%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 6% 7%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 5% 12%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 240 5% 12%;
+    --muted-foreground: 240 5% 62%;
+
+    --accent: 240 5% 15%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5% 16%;
+    --input: 240 5% 16%;
+    --ring: 217 91% 60%;
+
+    --play: 217 91% 60%;
+    --play-foreground: 0 0% 100%;
+
+    --radius: 0.75rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04';
+    overflow: hidden;
+    user-select: none;
+    cursor: default;
+  }
+
+  ::selection {
+    @apply bg-primary/30;
+  }
+
+  /* thin, quiet scrollbars */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted));
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--accent));
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  /* Play button gradient */
+  .gradient-play {
+    background-image: linear-gradient(135deg, hsl(217 91% 60%), hsl(262 83% 62%));
+  }
+
+  /* Ambient hero glow behind the top of the app */
+  .app-bg {
+    background:
+      radial-gradient(1200px 620px at 82% -12%, hsl(217 91% 60% / 0.12), transparent 60%),
+      radial-gradient(900px 520px at -8% 112%, hsl(262 83% 62% / 0.1), transparent 55%);
+  }
+
+  /* Fallback tile when a game has no cover art */
+  .cover-fallback {
+    background:
+      linear-gradient(160deg, hsl(240 6% 12%), hsl(240 8% 8%)),
+      radial-gradient(60% 50% at 30% 20%, hsl(217 91% 60% / 0.22), transparent);
+  }
+}
