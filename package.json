@@ -3,9 +3,9 @@
   "productName": "NovaPS5",
   "version": "0.2.0",
   "runtimeVersion": "1.0.0",
-  "description": "A modern PS5 games library that converts and plays dumps via the AnyPS5 relinker.",
+  "description": "A modern PS5 games library by Nova Crafted that converts and plays dumps via the AnyPS5 relinker.",
   "main": "out/main/index.js",
-  "author": "NovaPS5",
+  "author": "Nova Crafted",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",
@@ -16,8 +16,9 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "setup:tools": "node scripts/setup-tools.mjs",
     "pack:runtime": "node scripts/pack-runtime.mjs",
-    "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir"
+    "setup:python": "node scripts/fetch-python.mjs",
+    "dist": "node scripts/dist.mjs",
+    "dist:dir": "node scripts/dist.mjs --dir"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.1",
@@ -71,10 +72,25 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/python",
+        "to": "python",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "public/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {
-      "icon": "public/icon.png",
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -86,8 +102,17 @@
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NovaPS5",
+      "runAfterFinish": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "artifactName": "NovaPS5-Setup-${version}.${ext}"
     }
   }
 }

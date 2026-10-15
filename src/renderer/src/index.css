@@ -4,38 +4,40 @@
 
 @layer base {
   :root {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
+    /* Near-black with a warm tint, paired with the copper from the logo. */
+    --background: 240 8% 3.4%;
+    --foreground: 30 12% 96%;
 
-    --card: 240 6% 7%;
-    --card-foreground: 0 0% 98%;
+    --card: 240 6% 6.6%;
+    --card-foreground: 30 12% 96%;
 
-    --popover: 240 6% 7%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 240 7% 7.4%;
+    --popover-foreground: 30 12% 96%;
 
-    --primary: 31 51% 46%;
-    --primary-foreground: 0 0% 100%;
+    /* Brand copper (≈ #C8792A, sampled from the logo). */
+    --primary: 31 60% 48%;
+    --primary-foreground: 30 45% 7%;
 
-    --secondary: 240 5% 12%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 240 5% 11%;
+    --secondary-foreground: 30 12% 96%;
 
-    --muted: 240 5% 12%;
-    --muted-foreground: 240 5% 62%;
+    --muted: 240 5% 11%;
+    --muted-foreground: 240 6% 61%;
 
-    --accent: 240 5% 15%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 240 5% 14.5%;
+    --accent-foreground: 30 12% 96%;
 
     --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 240 5% 16%;
+    --border: 240 5% 15%;
     --input: 240 5% 16%;
-    --ring: 31 51% 46%;
+    --ring: 31 60% 52%;
 
-    --play: 31 51% 46%;
-    --play-foreground: 0 0% 100%;
+    --play: 31 60% 48%;
+    --play-foreground: 30 45% 7%;
 
-    --radius: 0.75rem;
+    --radius: 0.85rem;
   }
 
   * {
@@ -60,6 +62,23 @@
     @apply bg-primary/30;
   }
 
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring/70 ring-offset-2 ring-offset-background;
+  }
+
+  /* Windows/Linux frameless title bar: the strip itself drags the window,
+     everything interactive inside it stays clickable. */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+  .drag-region button,
+  .drag-region input,
+  .drag-region a,
+  .drag-region select,
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
   /* thin, quiet scrollbars */
   ::-webkit-scrollbar {
     width: 10px;
@@ -80,23 +99,46 @@
   }
 }
 
+@layer components {
+  /* Frosted surface used for cards, dialogs and grouped settings rows. */
+  .panel {
+    @apply rounded-2xl border border-border/60 bg-card/60 backdrop-blur-sm;
+  }
+
+  /* Muted section label above grouped content. */
+  .section-label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground;
+  }
+}
+
 @layer utilities {
-  /* Play button gradient — brand copper (#B27739) into warm highlight */
+  /* Play button gradient — brand copper into warm highlight */
   .gradient-play {
-    background-image: linear-gradient(135deg, hsl(31 51% 46%), hsl(38 72% 55%));
+    background-image: linear-gradient(135deg, hsl(31 60% 48%), hsl(38 78% 58%));
+  }
+
+  /* Hairline gradient used for separators / active accents */
+  .gradient-line {
+    background-image: linear-gradient(90deg, transparent, hsl(31 60% 48% / 0.55), transparent);
   }
 
   /* Ambient hero glow behind the top of the app */
   .app-bg {
     background:
-      radial-gradient(1200px 620px at 82% -12%, hsl(31 51% 46% / 0.1), transparent 60%),
-      radial-gradient(900px 520px at -8% 112%, hsl(31 51% 46% / 0.06), transparent 55%);
+      radial-gradient(1100px 560px at 78% -14%, hsl(31 60% 48% / 0.13), transparent 60%),
+      radial-gradient(880px 520px at -10% 108%, hsl(31 60% 48% / 0.07), transparent 55%),
+      linear-gradient(180deg, hsl(240 8% 4%), hsl(240 8% 3.2%));
+  }
+
+  /* Soft glow for the brand logo */
+  .brand-glow {
+    filter: drop-shadow(0 6px 22px hsl(31 60% 48% / 0.28));
   }
 
   /* Fallback tile when a game has no cover art */
   .cover-fallback {
     background:
       linear-gradient(160deg, hsl(240 6% 12%), hsl(240 8% 8%)),
-      radial-gradient(60% 50% at 30% 20%, hsl(31 51% 46% / 0.24), transparent);
+      radial-gradient(60% 50% at 30% 20%, hsl(31 60% 48% / 0.24), transparent);
   }
 }

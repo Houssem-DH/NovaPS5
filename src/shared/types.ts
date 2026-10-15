@@ -105,6 +105,8 @@ export interface AppInfo {
   relinkerPresent: boolean
   libsPresent: boolean
   pythonPath: string | null
+  /** True when the interpreter ships with the app (no system Python needed). */
+  pythonBundled: boolean
   libraryRoot: string
   /** Absolute path of the folder where new games are installed. */
   gamesDir: string
@@ -158,6 +160,18 @@ export interface SetGamesDirResult {
   error?: string
 }
 
+/** What a library scan changed, so the UI can report it. */
+export interface LibraryScanSummary {
+  added: number
+  missing: number
+  repaired: number
+}
+
+export interface LibraryScanResult {
+  games: Game[]
+  summary: LibraryScanSummary
+}
+
 /** API exposed on window.api via the preload contextBridge. */
 export interface LibraryApi {
   appInfo: () => Promise<AppInfo>
@@ -165,6 +179,8 @@ export interface LibraryApi {
   selectArchive: () => Promise<string | null>
   detect: (sourcePath: string) => Promise<DetectResult>
   list: () => Promise<Game[]>
+  /** Re-read the library from disk and adopt installs missing from the index. */
+  scan: () => Promise<LibraryScanResult>
   install: (req: ImportRequest) => Promise<{ jobId: string }>
   launch: (id: string) => Promise<{ ok: boolean; error?: string }>
   remove: (id: string) => Promise<{ ok: boolean }>
@@ -175,6 +191,8 @@ export interface LibraryApi {
   runBootstrap: () => Promise<BootstrapResult>
   /** Streamed checklist progress while runBootstrap is executing. */
   onBootstrapStep: (cb: (step: BootstrapStep) => void) => () => void
+  /** The tray / app menu asks the UI to open the install dialog. */
+  onOpenInstall: (cb: () => void) => () => void
   getSettings: () => Promise<AppSettings>
   /** Point new installs at another folder, relocating installed games. */
   setGamesDir: (dir: string) => Promise<SetGamesDirResult>

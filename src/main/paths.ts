@@ -38,6 +38,22 @@ export function toolsDir(): string {
   return path.join(app.getAppPath(), 'resources', 'tools')
 }
 
+/**
+ * Python runtime shipped with the app so end users never install Python.
+ *  - dev:      <project>/resources/python
+ *  - packaged: <resources>/python (electron-builder extraResources)
+ * Populated by `npm run setup:python` / the dist scripts.
+ */
+export function bundledPythonDir(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'python')
+    : path.join(app.getAppPath(), 'resources', 'python')
+}
+
+export function bundledPythonExe(): string {
+  return path.join(bundledPythonDir(), process.platform === 'win32' ? 'python.exe' : 'python3')
+}
+
 export function relinkerPath(): string {
   return path.join(toolsDir(), 'relinker.exe')
 }

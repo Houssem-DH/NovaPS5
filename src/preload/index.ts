@@ -7,6 +7,7 @@ const api: LibraryApi = {
   selectArchive: () => ipcRenderer.invoke('dialog:selectZip'),
   detect: (sourcePath: string) => ipcRenderer.invoke('library:detect', sourcePath),
   list: () => ipcRenderer.invoke('library:list'),
+  scan: () => ipcRenderer.invoke('library:scan'),
   install: (req: ImportRequest) => ipcRenderer.invoke('install:start', req),
   launch: (id: string) => ipcRenderer.invoke('game:launch', id),
   remove: (id: string) => ipcRenderer.invoke('game:remove', id),
@@ -24,7 +25,12 @@ const api: LibraryApi = {
     return () => ipcRenderer.removeListener('bootstrap:step', listener)
   },
   getSettings: () => ipcRenderer.invoke('settings:get'),
-  setGamesDir: (dir: string) => ipcRenderer.invoke('settings:setGamesDir', dir)
+  setGamesDir: (dir: string) => ipcRenderer.invoke('settings:setGamesDir', dir),
+  onOpenInstall: (cb: () => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('ui:install', listener)
+    return () => ipcRenderer.removeListener('ui:install', listener)
+  }
 }
 
 contextBridge.exposeInMainWorld('api', api)

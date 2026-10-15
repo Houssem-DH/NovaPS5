@@ -7201,6 +7201,11 @@ const useLibrary = create((set, get) => ({
     const appInfo = await window.api.appInfo();
     set({ appInfo });
   },
+  scan: async () => {
+    const result = await window.api.scan();
+    set({ games: result.games });
+    return result;
+  },
   select: (id2) => set({ selectedId: id2 }),
   setView: (view) => set({ view, selectedId: null }),
   setInstallOpen: (installOpen) => set({ installOpen }),
@@ -7356,6 +7361,35 @@ const Circle = createLucideIcon("Circle", [
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const Cpu = createLucideIcon("Cpu", [
+  ["rect", { width: "16", height: "16", x: "4", y: "4", rx: "2", key: "14l7u7" }],
+  ["rect", { width: "6", height: "6", x: "9", y: "9", rx: "1", key: "5aljv4" }],
+  ["path", { d: "M15 2v2", key: "13l42r" }],
+  ["path", { d: "M15 20v2", key: "15mkzm" }],
+  ["path", { d: "M2 15h2", key: "1gxd5l" }],
+  ["path", { d: "M2 9h2", key: "1bbxkp" }],
+  ["path", { d: "M20 15h2", key: "19e6y8" }],
+  ["path", { d: "M20 9h2", key: "19tzq7" }],
+  ["path", { d: "M9 2v2", key: "165o2o" }],
+  ["path", { d: "M9 20v2", key: "i2bqo8" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Database = createLucideIcon("Database", [
+  ["ellipse", { cx: "12", cy: "5", rx: "9", ry: "3", key: "msslwz" }],
+  ["path", { d: "M3 5V19A9 3 0 0 0 21 19V5", key: "1wlel7" }],
+  ["path", { d: "M3 12A9 3 0 0 0 21 12", key: "mv7ke4" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const Download = createLucideIcon("Download", [
   ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
   ["polyline", { points: "7 10 12 15 17 10", key: "2ggqvy" }],
@@ -7390,21 +7424,6 @@ const FolderOpen = createLucideIcon("FolderOpen", [
     {
       d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2",
       key: "usdka0"
-    }
-  ]
-]);
-/**
- * @license lucide-react v0.417.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */
-const Folder = createLucideIcon("Folder", [
-  [
-    "path",
-    {
-      d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
-      key: "1kt360"
     }
   ]
 ]);
@@ -7587,6 +7606,22 @@ const Settings = createLucideIcon("Settings", [
     }
   ],
   ["circle", { cx: "12", cy: "12", r: "3", key: "1v7zrd" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const ShieldCheck = createLucideIcon("ShieldCheck", [
+  [
+    "path",
+    {
+      d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+      key: "oel41y"
+    }
+  ],
+  ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -10388,88 +10423,6 @@ const Button = reactExports.forwardRef(
   }
 );
 Button.displayName = "Button";
-var __defProp$e = Object.defineProperty;
-var __name$e = (target, value) => __defProp$e(target, "name", { value, configurable: true });
-var NODES = [
-  "a",
-  "button",
-  "div",
-  "form",
-  "h2",
-  "h3",
-  "img",
-  "input",
-  "label",
-  "li",
-  "nav",
-  "ol",
-  "p",
-  "select",
-  "span",
-  "svg",
-  "ul"
-];
-var Primitive = NODES.reduce((primitive, node) => {
-  const Slot2 = /* @__PURE__ */ createSlot(`Primitive.${node}`);
-  const Node2 = reactExports.forwardRef((props, forwardedRef) => {
-    const { asChild, ...primitiveProps } = props;
-    const Comp = asChild ? Slot2 : node;
-    if (typeof window !== "undefined") {
-      window[Symbol.for("radix-ui")] = true;
-    }
-    return /* @__PURE__ */ jsxRuntimeExports.jsx(Comp, { ...primitiveProps, ref: forwardedRef });
-  });
-  Node2.displayName = `Primitive.${node}`;
-  return { ...primitive, [node]: Node2 };
-}, {});
-function dispatchDiscreteCustomEvent(target, event) {
-  if (target) reactDomExports.flushSync(() => target.dispatchEvent(event));
-}
-__name$e(dispatchDiscreteCustomEvent, "dispatchDiscreteCustomEvent");
-var __defProp$d = Object.defineProperty;
-var __name$d = (target, value) => __defProp$d(target, "name", { value, configurable: true });
-var Orientation = {
-  Horizontal: "horizontal",
-  Vertical: "vertical"
-};
-var DEFAULT_ORIENTATION = Orientation.Horizontal;
-var ORIENTATIONS = Object.values(Orientation);
-var Separator$1 = /* @__PURE__ */ reactExports.forwardRef(
-  /* @__PURE__ */ __name$d(function Separator2(props, forwardedRef) {
-    const { decorative, orientation: orientationProp = DEFAULT_ORIENTATION, ...domProps } = props;
-    const orientation = isValidOrientation(orientationProp) ? orientationProp : DEFAULT_ORIENTATION;
-    const ariaOrientation = orientation === Orientation.Vertical ? orientation : void 0;
-    const semanticProps = decorative ? { role: "none" } : { "aria-orientation": ariaOrientation, role: "separator" };
-    return /* @__PURE__ */ jsxRuntimeExports.jsx(
-      Primitive.div,
-      {
-        "data-orientation": orientation,
-        ...semanticProps,
-        ...domProps,
-        ref: forwardedRef
-      }
-    );
-  }, "Separator")
-);
-function isValidOrientation(orientation) {
-  return ORIENTATIONS.includes(orientation);
-}
-__name$d(isValidOrientation, "isValidOrientation");
-const Separator = reactExports.forwardRef(({ className, orientation = "horizontal", decorative = true, ...props }, ref) => /* @__PURE__ */ jsxRuntimeExports.jsx(
-  Separator$1,
-  {
-    ref,
-    decorative,
-    orientation,
-    className: cn(
-      "shrink-0 bg-border",
-      orientation === "horizontal" ? "h-[1px] w-full" : "h-full w-[1px]",
-      className
-    ),
-    ...props
-  }
-));
-Separator.displayName = Separator$1.displayName;
 function NavItem({
   icon: Icon2,
   label,
@@ -10481,11 +10434,20 @@ function NavItem({
     {
       onClick,
       className: cn(
-        "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-        active ? "bg-primary/15 text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground"
+        "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
+        active ? "bg-primary/10 text-primary shadow-[inset_0_1px_0_0_hsl(var(--primary)/0.15)]" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
       ),
       children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: "h-4 w-4" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "span",
+          {
+            className: cn(
+              "absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary transition-opacity duration-200",
+              active ? "opacity-100" : "opacity-0"
+            )
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: cn("h-4 w-4 transition-transform duration-200", !active && "group-hover:scale-105") }),
         label
       ]
     }
@@ -10493,43 +10455,50 @@ function NavItem({
 }
 function Sidebar() {
   const { view, setView, setInstallOpen, appInfo } = useLibrary();
+  const [logoOk, setLogoOk] = reactExports.useState(true);
   const toolsReady = !!appInfo && appInfo.relinkerPresent && appInfo.libsPresent && !!appInfo.pythonPath;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "flex w-60 shrink-0 flex-col border-r border-border/60 bg-card/30", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3 px-5 py-5", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "relative flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-sm", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "px-5 pb-5 pt-6", children: [
+      logoOk ? /* @__PURE__ */ jsxRuntimeExports.jsx(
         "img",
         {
           src: "logo.png",
           alt: "NovaPS5",
-          className: "h-10 w-10 rounded-xl shadow-lg shadow-primary/25",
-          onError: (event) => {
-            const el2 = event.currentTarget;
-            el2.style.display = "none";
-            el2.parentElement?.classList.add("gradient-play", "h-10", "w-10", "rounded-xl");
-          }
+          draggable: false,
+          onError: () => setLogoOk(false),
+          className: "brand-glow h-auto w-full max-w-[170px] select-none"
         }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "leading-tight", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-sm font-semibold tracking-tight", children: [
-          "Nova",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[11px] text-muted-foreground", children: "Powered by AnyPS5" })
+      ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-xl font-semibold tracking-tight", children: [
+        "Nova",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "h-1 w-1 rounded-full bg-primary" }),
+        "Powered by Nova Crafted"
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Separator, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "gradient-line mx-4 h-px" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "flex flex-1 flex-col gap-1 p-3", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(NavItem, { icon: Library, label: "Library", active: view === "library", onClick: () => setView("library") }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(NavItem, { icon: Settings, label: "Settings", active: view === "settings", onClick: () => setView("settings") })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3 p-3", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { className: "w-full", onClick: () => setInstallOpen(true), children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3 border-t border-border/60 p-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "lg", className: "w-full rounded-xl", onClick: () => setInstallOpen(true), children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "h-4 w-4" }),
         " Install game"
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 px-1 text-[11px] text-muted-foreground", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: cn("h-2 w-2 rounded-full", toolsReady ? "bg-emerald-400" : "bg-amber-400") }),
-        toolsReady ? "Conversion tools ready" : "Check settings"
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 rounded-xl border border-border/50 bg-secondary/40 px-3 py-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Cpu, { className: "h-3.5 w-3.5 shrink-0 text-muted-foreground" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-[11px] text-muted-foreground", children: toolsReady ? "Conversion tools ready" : "Setup needed" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "span",
+          {
+            className: cn(
+              "ml-auto h-2 w-2 shrink-0 rounded-full",
+              toolsReady ? "bg-emerald-400 shadow-[0_0_8px] shadow-emerald-400/60" : "bg-amber-400"
+            )
+          }
+        )
       ] })
     ] })
   ] });
@@ -17663,26 +17632,36 @@ function GameCard({ game, index }) {
       className: "group relative cursor-pointer",
       onClick: () => select(game.id),
       children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative aspect-[3/4] overflow-hidden rounded-xl border border-border/60 bg-card transition-all duration-300 group-hover:-translate-y-1 group-hover:border-primary/50 group-hover:shadow-2xl group-hover:shadow-primary/10", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative aspect-[3/4] overflow-hidden rounded-2xl border border-border/60 bg-card transition-all duration-300 group-hover:-translate-y-1 group-hover:border-primary/50 group-hover:shadow-2xl group-hover:shadow-primary/15", children: [
           cover ? /* @__PURE__ */ jsxRuntimeExports.jsx(
             "img",
             {
               src: cover,
               alt: game.name,
               draggable: false,
-              className: "h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+              className: "h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
             }
           ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback flex h-full w-full items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-12 w-12 text-muted-foreground/30" }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent" }),
-          game.launchState && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" }),
+          game.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "span",
             {
-              className: `absolute left-2 top-2 z-10 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-sm ${game.launchState === "works" ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40" : "bg-red-500/20 text-red-300 ring-1 ring-red-400/40"}`,
+              className: "absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200 ring-1 ring-amber-400/40 backdrop-blur-sm",
+              title: game.error,
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "h-3 w-3" }),
+                " Missing"
+              ]
+            }
+          ) : game.launchState && /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "span",
+            {
+              className: `absolute left-2 top-2 z-10 inline-flex items-center rounded-lg px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-sm ring-1 ${game.launchState === "works" ? "bg-emerald-500/20 text-emerald-200 ring-emerald-400/40" : "bg-red-500/20 text-red-200 ring-red-400/40"}`,
               title: game.launchDetail,
               children: game.launchState === "works" ? "✓ Works" : "✗ Not working"
             }
           ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 backdrop-blur-[1px] transition-opacity duration-300 group-hover:opacity-100", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 backdrop-blur-[1px] transition-opacity duration-300 group-hover:opacity-100", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
               "aria-label": `Play ${game.name}`,
@@ -17690,14 +17669,15 @@ function GameCard({ game, index }) {
                 e.stopPropagation();
                 launch(game.id);
               },
-              className: "gradient-play flex h-16 w-16 items-center justify-center rounded-full shadow-2xl transition-transform duration-200 hover:scale-110",
+              className: "gradient-play flex h-16 w-16 items-center justify-center rounded-full shadow-2xl shadow-black/40 transition-transform duration-200 hover:scale-110",
               children: /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { className: "h-7 w-7 translate-x-[1px] text-white", fill: "currentColor" })
             }
           ) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute inset-x-0 bottom-0 p-3", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "truncate text-sm font-medium text-white", children: game.name }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-0.5 flex items-center gap-2 text-[11px] text-white/60", children: [
-              game.titleId && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: game.titleId }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute inset-x-0 bottom-0 p-3.5", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "truncate text-sm font-semibold text-white", children: game.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-1 flex items-center gap-2 text-[11px] text-white/60", children: [
+              game.titleId && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "tabular-nums", children: game.titleId }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "h-1 w-1 rounded-full bg-white/25" }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: formatBytes(game.sizeBytes) })
             ] })
           ] })
@@ -17710,7 +17690,7 @@ function GameCard({ game, index }) {
               e.stopPropagation();
               remove(game.id);
             },
-            className: "absolute right-2 top-2 rounded-md bg-black/60 p-1.5 text-white/80 opacity-0 transition-all hover:bg-destructive hover:text-white group-hover:opacity-100",
+            className: "absolute right-2 top-2 rounded-lg bg-black/60 p-1.5 text-white/80 opacity-0 backdrop-blur-sm transition-all hover:bg-destructive hover:text-white group-hover:opacity-100",
             children: /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, { className: "h-3.5 w-3.5" })
           }
         )
@@ -17722,14 +17702,36 @@ function GameGrid({ games }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: games.map((game, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(GameCard, { game, index }, game.id)) });
 }
 function EmptyState() {
-  const { setInstallOpen } = useLibrary();
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-[60vh] flex-col items-center justify-center text-center", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "gradient-play mb-6 flex h-20 w-20 items-center justify-center rounded-2xl shadow-2xl shadow-primary/25", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-10 w-10 text-white" }) }),
+  const { setInstallOpen, scan } = useLibrary();
+  const [scanning, setScanning] = reactExports.useState(false);
+  const [logoOk, setLogoOk] = reactExports.useState(true);
+  const runScan = async () => {
+    setScanning(true);
+    await scan();
+    setScanning(false);
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-[56vh] flex-col items-center justify-center text-center", children: [
+    logoOk ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "img",
+      {
+        src: "logo.png",
+        alt: "NovaPS5",
+        draggable: false,
+        onError: () => setLogoOk(false),
+        className: "brand-glow mb-4 h-auto w-52 select-none"
+      }
+    ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "gradient-play mb-6 flex h-20 w-20 items-center justify-center rounded-2xl shadow-2xl shadow-primary/25", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-10 w-10 text-white" }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-xl font-semibold tracking-tight", children: "Your library is empty" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-md text-sm text-muted-foreground", children: "Install a PS5 game from a dump you own. The app unwraps it, converts it with the AnyPS5 relinker, and sets it up to play — hands-off." }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "lg", className: "mt-6", onClick: () => setInstallOpen(true), children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "h-4 w-4" }),
-      " Install your first game"
+    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-md text-sm leading-relaxed text-muted-foreground", children: "Install a PS5 game from a dump you own — the app unwraps it, converts it with the AnyPS5 relinker, sets it up to play, then verifies it launches. Already have games on disk? Scan for them." }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex flex-wrap items-center justify-center gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "lg", onClick: () => setInstallOpen(true), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "h-4 w-4" }),
+        " Install your first game"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "lg", variant: "outline", onClick: runScan, disabled: scanning, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: cn("h-4 w-4", scanning && "animate-spin") }),
+        scanning ? "Scanning…" : "Scan library"
+      ] })
     ] })
   ] });
 }
@@ -17750,8 +17752,10 @@ function Skeleton({ className, ...props }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: cn("animate-pulse rounded-md bg-muted", className), ...props });
 }
 function LibraryView() {
-  const { games, loading } = useLibrary();
+  const { games, loading, scan, setInstallOpen } = useLibrary();
   const [query, setQuery] = reactExports.useState("");
+  const [scanning, setScanning] = reactExports.useState(false);
+  const [scanMsg, setScanMsg] = reactExports.useState(null);
   const filtered = reactExports.useMemo(() => {
     const q2 = query.trim().toLowerCase();
     if (!q2) return games;
@@ -17759,40 +17763,95 @@ function LibraryView() {
       (game) => game.name.toLowerCase().includes(q2) || (game.titleId ?? "").toLowerCase().includes(q2)
     );
   }, [games, query]);
+  const runScan = async () => {
+    setScanning(true);
+    setScanMsg(null);
+    try {
+      const { summary } = await scan();
+      const parts = [];
+      if (summary.added > 0) parts.push(`${summary.added} new`);
+      if (summary.repaired > 0) parts.push(`${summary.repaired} restored`);
+      if (summary.missing > 0) parts.push(`${summary.missing} missing`);
+      setScanMsg(
+        parts.length > 0 ? `Scan complete — ${parts.join(", ")}.` : "Scan complete — everything is up to date."
+      );
+    } catch (error) {
+      setScanMsg(error instanceof Error ? error.message : "Scan failed.");
+    }
+    setScanning(false);
+  };
   if (loading) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: Array.from({ length: 6 }).map((_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(Skeleton, { className: "aspect-[3/4] rounded-xl" }, i)) });
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Header, { count: null, query, onQuery: setQuery, onScan: runScan, scanning, scanMsg: null }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: Array.from({ length: 6 }).map((_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(Skeleton, { className: "aspect-[3/4] rounded-2xl" }, i)) })
+    ] });
   }
   if (games.length === 0) {
-    return /* @__PURE__ */ jsxRuntimeExports.jsx(EmptyState, {});
+    return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Header, { count: 0, query, onQuery: setQuery, onScan: runScan, scanning, scanMsg }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(EmptyState, {})
+    ] });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mb-7 flex items-end justify-between gap-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      Header,
+      {
+        count: games.length,
+        query,
+        onQuery: setQuery,
+        onScan: runScan,
+        scanning,
+        scanMsg
+      }
+    ),
+    filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel flex flex-col items-center gap-3 py-16 text-center", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-muted-foreground", children: [
+        "No games match “",
+        query,
+        "”."
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", size: "sm", onClick: () => setQuery(""), children: "Clear search" })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(GameGrid, { games: filtered }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-10 flex justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "ghost", size: "sm", className: "text-muted-foreground", onClick: () => setInstallOpen(true), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "h-4 w-4" }),
+      " Install another game"
+    ] }) })
+  ] });
+}
+function Header({
+  count: count2,
+  query,
+  onQuery,
+  onScan,
+  scanning,
+  scanMsg
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mb-7", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-end justify-between gap-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-2xl font-semibold tracking-tight", children: "Library" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-muted-foreground", children: [
-          games.length,
-          " installed ",
-          games.length === 1 ? "game" : "games"
-        ] })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: count2 === null ? "Loading your games…" : `${count2} installed ${count2 === 1 ? "game" : "games"}` })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative w-64", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Search, { className: "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          Input,
-          {
-            value: query,
-            onChange: (e) => setQuery(e.target.value),
-            placeholder: "Search by name or title ID…",
-            className: "pl-9"
-          }
-        )
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative w-60", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Search, { className: "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Input,
+            {
+              value: query,
+              onChange: (e) => onQuery(e.target.value),
+              placeholder: "Search by name or title ID…",
+              className: "pl-9"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", onClick: onScan, disabled: scanning, title: "Re-read the library from disk", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: cn("h-4 w-4", scanning && "animate-spin") }),
+          scanning ? "Scanning…" : "Scan"
+        ] })
       ] })
     ] }),
-    filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "py-16 text-center text-sm text-muted-foreground", children: [
-      "No games match “",
-      query,
-      "”."
-    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(GameGrid, { games: filtered })
+    scanMsg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-muted-foreground", role: "status", children: scanMsg })
   ] });
 }
 const badgeVariants = cva(
@@ -17813,9 +17872,91 @@ const badgeVariants = cva(
 function Badge({ className, variant, ...props }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: cn(badgeVariants({ variant }), className), ...props });
 }
+var __defProp$e = Object.defineProperty;
+var __name$e = (target, value) => __defProp$e(target, "name", { value, configurable: true });
+var NODES = [
+  "a",
+  "button",
+  "div",
+  "form",
+  "h2",
+  "h3",
+  "img",
+  "input",
+  "label",
+  "li",
+  "nav",
+  "ol",
+  "p",
+  "select",
+  "span",
+  "svg",
+  "ul"
+];
+var Primitive = NODES.reduce((primitive, node) => {
+  const Slot2 = /* @__PURE__ */ createSlot(`Primitive.${node}`);
+  const Node2 = reactExports.forwardRef((props, forwardedRef) => {
+    const { asChild, ...primitiveProps } = props;
+    const Comp = asChild ? Slot2 : node;
+    if (typeof window !== "undefined") {
+      window[Symbol.for("radix-ui")] = true;
+    }
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(Comp, { ...primitiveProps, ref: forwardedRef });
+  });
+  Node2.displayName = `Primitive.${node}`;
+  return { ...primitive, [node]: Node2 };
+}, {});
+function dispatchDiscreteCustomEvent(target, event) {
+  if (target) reactDomExports.flushSync(() => target.dispatchEvent(event));
+}
+__name$e(dispatchDiscreteCustomEvent, "dispatchDiscreteCustomEvent");
+var __defProp$d = Object.defineProperty;
+var __name$d = (target, value) => __defProp$d(target, "name", { value, configurable: true });
+var Orientation = {
+  Horizontal: "horizontal",
+  Vertical: "vertical"
+};
+var DEFAULT_ORIENTATION = Orientation.Horizontal;
+var ORIENTATIONS = Object.values(Orientation);
+var Separator$1 = /* @__PURE__ */ reactExports.forwardRef(
+  /* @__PURE__ */ __name$d(function Separator2(props, forwardedRef) {
+    const { decorative, orientation: orientationProp = DEFAULT_ORIENTATION, ...domProps } = props;
+    const orientation = isValidOrientation(orientationProp) ? orientationProp : DEFAULT_ORIENTATION;
+    const ariaOrientation = orientation === Orientation.Vertical ? orientation : void 0;
+    const semanticProps = decorative ? { role: "none" } : { "aria-orientation": ariaOrientation, role: "separator" };
+    return /* @__PURE__ */ jsxRuntimeExports.jsx(
+      Primitive.div,
+      {
+        "data-orientation": orientation,
+        ...semanticProps,
+        ...domProps,
+        ref: forwardedRef
+      }
+    );
+  }, "Separator")
+);
+function isValidOrientation(orientation) {
+  return ORIENTATIONS.includes(orientation);
+}
+__name$d(isValidOrientation, "isValidOrientation");
+const Separator = reactExports.forwardRef(({ className, orientation = "horizontal", decorative = true, ...props }, ref) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+  Separator$1,
+  {
+    ref,
+    decorative,
+    orientation,
+    className: cn(
+      "shrink-0 bg-border",
+      orientation === "horizontal" ? "h-[1px] w-full" : "h-full w-[1px]",
+      className
+    ),
+    ...props
+  }
+));
+Separator.displayName = Separator$1.displayName;
 function Meta({ label, value, wide }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: wide ? "sm:col-span-2" : void 0, children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-[11px] uppercase tracking-wide text-muted-foreground", children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-[11px] uppercase tracking-[0.12em] text-muted-foreground", children: label }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("dd", { className: "mt-1 break-all text-sm text-foreground/90", children: value })
   ] });
 }
@@ -17830,15 +17971,22 @@ function GameDetail() {
       " Back to library"
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-9 md:flex-row", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full max-w-[15rem] shrink-0 md:max-w-xs", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative aspect-[3/4] overflow-hidden rounded-2xl border border-border/60 shadow-2xl", children: cover ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: cover, alt: game.name, draggable: false, className: "h-full w-full object-cover" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback flex h-full w-full items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-14 w-14 text-muted-foreground/30" }) }) }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full max-w-[15rem] shrink-0 md:max-w-xs", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative aspect-[3/4] overflow-hidden rounded-2xl border border-border/60 shadow-2xl shadow-black/40", children: cover ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: cover, alt: game.name, draggable: false, className: "h-full w-full object-cover" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback flex h-full w-full items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-14 w-14 text-muted-foreground/30" }) }) }) }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "success", children: "Ready to play" }),
+          game.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Badge, { variant: "destructive", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mr-1 h-3 w-3" }),
+            " Files missing"
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "success", children: "Ready to play" }),
           game.launchState === "works" && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "success", children: "Launch test passed" }),
           game.launchState === "failed" && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "destructive", children: "Launch test failed" }),
           game.titleId && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "secondary", children: game.titleId })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "mt-3 text-3xl font-semibold tracking-tight", children: game.name }),
+        game.status === "error" && game.error && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-3 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-3 text-xs text-amber-200", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-3.5 w-3.5 shrink-0" }),
+          game.error
+        ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex flex-wrap gap-3", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "lg", variant: "play", onClick: () => launch(game.id), children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { className: "h-4 w-4", fill: "currentColor" }),
@@ -17875,12 +18023,25 @@ function GameDetail() {
           ),
           /* @__PURE__ */ jsxRuntimeExports.jsx(Meta, { label: "Install folder", value: game.installPath, wide: true })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex items-start gap-2 rounded-lg border border-border/60 bg-card/50 p-3 text-xs text-muted-foreground", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { className: "mt-0.5 h-3.5 w-3.5 shrink-0" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel mt-6 flex items-start gap-2.5 p-3.5 text-xs text-muted-foreground", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "break-all", children: game.exePath })
         ] })
       ] })
     ] })
+  ] });
+}
+function Section({
+  title,
+  description,
+  children
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mb-8", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "section-label", children: title }),
+      description && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-muted-foreground", children: description })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-2.5", children })
   ] });
 }
 function Row({
@@ -17888,19 +18049,35 @@ function Row({
   label,
   value,
   ok: ok2,
+  badge,
   action
 }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3 rounded-xl border border-border/60 bg-card/50 p-4", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: "h-4 w-4 text-primary" }) }),
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel flex items-start gap-3.5 p-4 transition-colors hover:border-border", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary/70", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: "h-4 w-4 text-primary" }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-sm font-medium", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2 text-sm font-medium", children: [
         label,
+        badge,
         ok2 !== void 0 && (ok2 ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "h-4 w-4 text-emerald-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "h-4 w-4 text-red-400" }))
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-0.5 break-all text-xs text-muted-foreground", children: value })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 break-all text-xs text-muted-foreground", children: value })
     ] }),
-    action && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "shrink-0", children: action })
+    action && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "shrink-0 self-center", children: action })
   ] });
+}
+function Pill({ tone, children }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "span",
+    {
+      className: cn(
+        "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        tone === "ok" && "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+        tone === "warn" && "border-amber-500/30 bg-amber-500/10 text-amber-300",
+        tone === "muted" && "border-border bg-secondary/60 text-muted-foreground"
+      ),
+      children
+    }
+  );
 }
 function SettingsView() {
   const { appInfo, refreshInfo } = useLibrary();
@@ -17917,7 +18094,7 @@ function SettingsView() {
     await refreshInfo();
     setChecking(false);
   };
-  const checkUpdates = async () => {
+  const scanForUpdates = async () => {
     setUpdating(true);
     setRuntimeMsg(null);
     const result = await window.api.runBootstrap();
@@ -17941,52 +18118,50 @@ function SettingsView() {
     setMoving(false);
   };
   const pythonOk = !!appInfo?.pythonPath;
-  const toolsOk = appInfo?.relinkerPresent && appInfo?.libsPresent;
+  const toolsOk = !!appInfo?.relinkerPresent && !!appInfo?.libsPresent;
+  const runtimeOk = toolsOk;
   const allOk = pythonOk && toolsOk;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "max-w-2xl", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-7 flex items-end justify-between gap-4", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "max-w-3xl", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-7 flex flex-wrap items-end justify-between gap-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-2xl font-semibold tracking-tight", children: "Settings" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: "Runtime updates, library locations, and tooling." })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: "Runtime, storage locations, and conversion tooling." })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", size: "sm", onClick: checkUpdates, disabled: updating, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { className: cn("h-4 w-4", updating && "animate-pulse") }),
-          updating ? "Checking…" : "Check for updates"
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", size: "sm", onClick: recheck, disabled: checking, children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: cn("h-4 w-4", checking && "animate-spin") }),
-          " Re-check"
-        ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", size: "sm", onClick: recheck, disabled: checking, children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: cn("h-4 w-4", checking && "animate-spin") }),
+        " Re-check"
       ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "div",
       {
         className: cn(
-          "mb-5 flex items-center gap-2.5 rounded-xl border p-4 text-sm",
-          allOk ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300"
+          "mb-8 flex items-center gap-3 rounded-2xl border p-4 text-sm",
+          allOk ? "border-emerald-500/25 bg-emerald-500/[0.07] text-emerald-200" : "border-amber-500/25 bg-amber-500/[0.07] text-amber-200"
         ),
         children: [
-          allOk ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "h-5 w-5 shrink-0" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "h-5 w-5 shrink-0" }),
-          allOk ? "Everything is ready — games can be converted and played." : "Some components are missing. Conversion may fail until they are resolved."
+          allOk ? /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldCheck, { className: "h-5 w-5 shrink-0" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "h-5 w-5 shrink-0" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: allOk ? "Everything is ready — games can be converted and played." : "Some components are missing. Conversion may fail until they are resolved." })
         ]
       }
     ),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(Section, { title: "Conversion runtime", description: "Downloaded from the AnyPS5 releases; updated automatically.", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         Row,
         {
           icon: Package,
-          label: "Conversion runtime",
-          value: appInfo?.runtimeVersion ? `v${appInfo.runtimeVersion} — github.com/${appInfo.runtimeRepo}` : "Not installed yet — installs automatically on launch",
-          ok: toolsOk,
-          action: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", size: "sm", onClick: checkUpdates, disabled: updating, children: [
-            updating && /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-4 w-4 animate-spin" }),
-            updating ? "Working…" : "Update"
+          label: "Runtime",
+          value: appInfo?.runtimeVersion ? `v${appInfo.runtimeVersion} · github.com/${appInfo.runtimeRepo}` : "Not installed yet — installs automatically on launch",
+          badge: runtimeOk ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: "ok", children: "Up to date" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: "warn", children: "Not installed" }),
+          action: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", size: "sm", onClick: scanForUpdates, disabled: updating, children: [
+            updating ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-4 w-4 animate-spin" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-4 w-4" }),
+            updating ? "Scanning…" : runtimeOk ? "Scan for updates" : "Install runtime"
           ] })
         }
       ),
+      runtimeMsg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "px-1 text-xs text-muted-foreground", role: "status", children: runtimeMsg })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(Section, { title: "Storage", description: "Where installed games are kept. Changing it moves your existing games.", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         Row,
         {
@@ -17999,12 +18174,16 @@ function SettingsView() {
           ] })
         }
       ),
+      gamesMsg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "px-1 text-xs text-muted-foreground", role: "status", children: gamesMsg }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "px-1 text-xs leading-relaxed text-muted-foreground", children: "Every already-installed game is relocated into the new folder — large libraries can take a while. Nothing is deleted if a move fails." })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(Section, { title: "Components", description: "Shipped with the app — nothing to install by hand.", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         Row,
         {
           icon: Wrench,
           label: "Relinker",
-          value: appInfo?.relinkerPresent ? "relinker.exe found" : "relinker.exe missing — it installs automatically",
+          value: appInfo?.relinkerPresent ? "relinker.exe present" : "Missing — it installs automatically on launch",
           ok: appInfo?.relinkerPresent
         }
       ),
@@ -18022,25 +18201,25 @@ function SettingsView() {
         {
           icon: Terminal,
           label: "Python 3",
-          value: pythonOk ? `Detected: ${appInfo?.pythonPath}` : "Python 3 not found (needed for SELF unwrapping)",
-          ok: pythonOk
+          value: pythonOk ? appInfo?.pythonBundled ? "Bundled with NovaPS5 — no separate install required" : `Detected: ${appInfo?.pythonPath}` : "Missing — repair or reinstall NovaPS5",
+          ok: pythonOk,
+          badge: appInfo?.pythonBundled ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: "muted", children: "Bundled" }) : void 0
         }
       ),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { icon: Folder, label: "Library folder", value: appInfo?.libraryRoot ?? "…" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { icon: Folder, label: "Tools folder", value: appInfo?.toolsDir ?? "…" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Row,
+        {
+          icon: Database,
+          label: "Tools folder",
+          value: appInfo?.toolsDir ?? "…"
+        }
+      )
     ] }),
-    runtimeMsg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-muted-foreground", role: "status", children: runtimeMsg }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs leading-relaxed text-muted-foreground", children: "Changing the games folder relocates every already-installed game into the new location — large libraries can take a while." }),
-    gamesMsg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-muted-foreground", role: "status", children: gamesMsg }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Separator, { className: "my-7" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-xs leading-relaxed text-muted-foreground", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-medium text-foreground/80", children: "How it works" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1", children: [
-        "Each install unwraps the game's SELF modules to ELF, runs the AnyPS5 relinker to build a Windows executable, and arranges the ",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "rounded bg-secondary px-1", children: "app0/" }),
-        " runtime layout. Conversion uses your local dump only — nothing is downloaded."
-      ] })
-    ] })
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Section, { title: "About", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "panel p-4 text-xs leading-relaxed text-muted-foreground", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+      "Each install unwraps the game's SELF modules to ELF, runs the AnyPS5 relinker to build a Windows executable, arranges the ",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "rounded bg-secondary px-1", children: "app0/" }),
+      " runtime layout, then launches the game once to verify it works. Conversion uses your local dump only — nothing is uploaded."
+    ] }) }) })
   ] });
 }
 var __defProp$c = Object.defineProperty;
@@ -20250,7 +20429,7 @@ const DialogContent = reactExports.forwardRef(({ className, children, ...props }
     {
       ref,
       className: cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 border bg-card p-6 shadow-2xl duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-2xl",
+        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-xl -translate-x-1/2 -translate-y-1/2 gap-4 border border-border/60 bg-card/95 p-6 shadow-2xl shadow-black/50 backdrop-blur-md duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-2xl",
         className
       ),
       ...props,
@@ -20422,17 +20601,17 @@ function InstallDialog() {
   const showProgress = installing && (running || done || failed);
   const works = done && installing?.launchState === "works";
   const launchFailed = done && installing?.launchState === "failed";
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open: installOpen, onOpenChange: handleOpenChange, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open: installOpen, onOpenChange: handleOpenChange, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { className: "max-h-[86vh] overflow-y-auto", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle, { children: "Install a game" }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(DialogDescription, { children: "Convert a PS5 dump you own into a playable Windows game — fully automated." })
     ] }),
     showProgress ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4 py-2", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3", children: [
-        done ? launchFailed ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "h-6 w-6 shrink-0 text-emerald-400" }) : failed ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-6 w-6 shrink-0 animate-spin text-primary" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+        done ? launchFailed ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "mt-0.5 h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "mt-0.5 h-6 w-6 shrink-0 text-emerald-400" }) : failed ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "mt-0.5 h-6 w-6 shrink-0 animate-spin text-primary" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-sm font-medium", children: done ? launchFailed ? "Installed — launch test failed" : works ? "Installed — launch test passed" : "Installed — ready to play" : failed ? "Conversion failed" : installing?.message }),
-          installing?.gameName && done && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-xs text-muted-foreground", children: installing.gameName }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "break-all text-sm font-medium leading-snug", title: installing?.message, children: done ? launchFailed ? "Installed — launch test failed" : works ? "Installed — launch test passed" : "Installed — ready to play" : failed ? "Conversion failed" : installing?.message }),
+          installing?.gameName && done && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "break-words text-xs text-muted-foreground", children: installing.gameName }),
           done && launchFailed && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 break-all text-xs text-red-300", children: [
             "The game did not start: ",
             installing?.launchDetail
@@ -20440,7 +20619,7 @@ function InstallDialog() {
           done && works && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-emerald-300/90", children: "The game started and kept running — it works." }),
           failed && installing?.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 break-all text-xs text-red-400/90", children: installing.error })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm tabular-nums text-muted-foreground", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "shrink-0 text-sm tabular-nums text-muted-foreground", children: [
           installing?.percent ?? 0,
           "%"
         ] })
@@ -20512,9 +20691,9 @@ function InstallDialog() {
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: detect.reason })
       ] }),
       detect?.isDump && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3 rounded-xl border border-border/60 bg-card/50 p-4", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "font-medium", children: detect.name }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-xs text-muted-foreground", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "break-words font-medium", children: detect.name }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "break-words text-xs text-muted-foreground", children: [
             detect.titleId ?? "Unknown title ID",
             " · ",
             formatBytes(detect.sizeBytes ?? 0),
@@ -20539,7 +20718,7 @@ function InstallDialog() {
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "space-y-1.5", children: detect.checks.map((check) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "flex items-start gap-2 text-xs", children: [
           check.status === "pass" ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "mt-px h-3.5 w-3.5 shrink-0 text-emerald-400" }) : check.status === "warn" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-px h-3.5 w-3.5 shrink-0 text-amber-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "mt-px h-3.5 w-3.5 shrink-0 text-red-400" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0 break-words leading-snug", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium", children: check.label }),
             " ",
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: check.detail })
@@ -20643,21 +20822,17 @@ function BootstrapScreen({ onDone }) {
       unsubscribe();
     };
   }, [attempt]);
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-bg flex h-screen items-center justify-center overflow-hidden bg-background", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-md px-8", children: [
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "app-bg drag-region flex h-screen items-center justify-center overflow-hidden bg-background", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-md px-8", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-9 flex flex-col items-center text-center", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "logo.png", alt: "NovaPS5", className: "h-16 w-16 rounded-2xl shadow-xl shadow-primary/20" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("h1", { className: "mt-4 text-2xl font-semibold tracking-tight", children: [
-        "Nova",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-muted-foreground", children: error ? "Runtime setup needs attention" : "Preparing the conversion runtime…" })
+      /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "logo.png", alt: "NovaPS5", className: "brand-glow h-auto w-56 select-none" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-sm text-muted-foreground", children: error ? "Runtime setup needs attention" : "Preparing the conversion runtime…" })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2.5", children: [
       steps.length === 0 && !error && /* @__PURE__ */ jsxRuntimeExports.jsx(StepRow, { step: { id: "check", label: STEP_META.check.label, status: "active" } }),
       steps.map((step) => /* @__PURE__ */ jsxRuntimeExports.jsx(StepRow, { step }, step.id))
     ] }),
     error && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300", children: error }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-7 flex items-center justify-center gap-3", children: error ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: () => setAttempt((n2) => n2 + 1), children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "no-drag mt-7 flex items-center justify-center gap-3", children: error ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: () => setAttempt((n2) => n2 + 1), children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-4 w-4" }),
       " Try again"
     ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2 text-xs text-muted-foreground", children: [
@@ -20666,8 +20841,18 @@ function BootstrapScreen({ onDone }) {
     ] }) })
   ] }) });
 }
+function TitleBar() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "drag-region flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 bg-card/40 px-4 backdrop-blur-sm", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "icon.png", alt: "", draggable: false, className: "h-4 w-4 select-none" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs font-semibold tracking-tight", children: [
+      "Nova",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-auto mr-[9.5rem] hidden text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/50 md:block", children: "Nova Crafted" })
+  ] });
+}
 function App() {
-  const { view, selectedId, load, refreshInfo, setInstalling, bootstrapped, setBootstrapped } = useLibrary();
+  const { view, selectedId, load, refreshInfo, setInstalling, bootstrapped, setBootstrapped, setInstallOpen } = useLibrary();
   reactExports.useEffect(() => {
     if (!bootstrapped) return;
     void load();
@@ -20676,18 +20861,25 @@ function App() {
       setInstalling(progress2);
       if (progress2.status === "done") void load();
     });
-    return unsubscribe;
+    const unsubscribeInstall = window.api.onOpenInstall(() => setInstallOpen(true));
+    return () => {
+      unsubscribe();
+      unsubscribeInstall();
+    };
   }, [bootstrapped]);
   if (!bootstrapped) {
     return /* @__PURE__ */ jsxRuntimeExports.jsx(BootstrapScreen, { onDone: () => setBootstrapped(true) });
   }
   const showDetail = view === "library" && !!selectedId;
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-screen overflow-hidden", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "app-bg flex-1 overflow-y-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mx-auto max-w-6xl px-8 py-8", children: [
-      view === "library" && (showDetail ? /* @__PURE__ */ jsxRuntimeExports.jsx(GameDetail, {}) : /* @__PURE__ */ jsxRuntimeExports.jsx(LibraryView, {})),
-      view === "settings" && /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsView, {})
-    ] }) }),
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-screen flex-col overflow-hidden", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(TitleBar, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-0 flex-1 overflow-hidden", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "app-bg flex-1 overflow-y-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mx-auto max-w-6xl px-8 py-8", children: [
+        view === "library" && (showDetail ? /* @__PURE__ */ jsxRuntimeExports.jsx(GameDetail, {}) : /* @__PURE__ */ jsxRuntimeExports.jsx(LibraryView, {})),
+        view === "settings" && /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsView, {})
+      ] }) })
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(InstallDialog, {})
   ] });
 }

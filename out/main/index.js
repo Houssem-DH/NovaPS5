@@ -20,6 +20,12 @@ function toolsDir() {
   }
   return path.join(electron.app.getAppPath(), "resources", "tools");
 }
+function bundledPythonDir() {
+  return electron.app.isPackaged ? path.join(process.resourcesPath, "python") : path.join(electron.app.getAppPath(), "resources", "python");
+}
+function bundledPythonExe() {
+  return path.join(bundledPythonDir(), process.platform === "win32" ? "python.exe" : "python3");
+}
 function relinkerPath() {
   return path.join(toolsDir(), "relinker.exe");
 }
@@ -76,9 +82,9 @@ function ensureDir(dir) {
 }
 function isWritableDir(dir) {
   try {
-    const probe = path.join(dir, `.write-probe-${process.pid}`);
-    fs.writeFileSync(probe, "");
-    fs.rmSync(probe, { force: true });
+    const probe2 = path.join(dir, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probe2, "");
+    fs.rmSync(probe2, { force: true });
     return true;
   } catch {
     return false;
@@ -175,6 +181,112 @@ async function relocateGames(updates) {
     }
   }
   await persist();
+}
+async function exists(target) {
+  try {
+    await fs.promises.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function dirSize$1(dir) {
+  let total = 0;
+  try {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        total += await dirSize$1(full);
+      } else {
+        try {
+          total += (await fs.promises.stat(full)).size;
+        } catch {
+        }
+      }
+    }
+  } catch {
+  }
+  return total;
+}
+async function readTitleId(dir) {
+  try {
+    const raw = await fs.promises.readFile(path.join(dir, "app0", "sce_sys", "param.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    return typeof parsed.titleId === "string" ? parsed.titleId : null;
+  } catch {
+    return null;
+  }
+}
+async function looksInstalled(dir) {
+  try {
+    if (!await exists(path.join(dir, "app0"))) return null;
+    const files = await fs.promises.readdir(dir);
+    const exe = files.find((f) => f.toLowerCase().endsWith(".exe"));
+    return exe ?? null;
+  } catch {
+    return null;
+  }
+}
+async function scanLibrary() {
+  cache = null;
+  const data = await load();
+  const summary = { added: 0, missing: 0, repaired: 0 };
+  for (const game of data.games) {
+    const exeOk = await exists(game.exePath);
+    const dirOk = await exists(game.installPath);
+    if (exeOk) {
+      if (game.status !== "ready" || game.error) {
+        game.status = "ready";
+        delete game.error;
+        summary.repaired++;
+      }
+    } else {
+      const detail = dirOk ? "The game executable is missing — reinstall the game." : "The install folder is gone.";
+      if (game.status !== "error" || game.error !== detail) {
+        game.status = "error";
+        game.error = detail;
+        summary.missing++;
+      }
+    }
+  }
+  const root = gamesRoot();
+  let dirs = [];
+  try {
+    const entries = await fs.promises.readdir(root, { withFileTypes: true });
+    dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith(".") && !e.name.endsWith(".old")).map((e) => e.name);
+  } catch {
+    dirs = [];
+  }
+  const known = new Set(data.games.map((g) => path.resolve(g.installPath)));
+  for (const name of dirs) {
+    const dir = path.join(root, name);
+    if (known.has(path.resolve(dir))) continue;
+    const exe = await looksInstalled(dir);
+    if (!exe) continue;
+    let installedAt = Date.now();
+    try {
+      installedAt = (await fs.promises.stat(dir)).birthtimeMs || installedAt;
+    } catch {
+    }
+    const game = {
+      id: name,
+      name: path.basename(exe, path.extname(exe)),
+      titleId: await readTitleId(dir),
+      sourcePath: "",
+      installPath: dir,
+      exePath: path.join(dir, exe),
+      sizeBytes: await dirSize$1(dir),
+      cover: await exists(path.join(dir, "cover.png")) ? "cover.png" : null,
+      status: "ready",
+      installedAt
+    };
+    data.games.push(game);
+    summary.added++;
+  }
+  if (summary.added > 0 || summary.missing > 0 || summary.repaired > 0) await persist();
+  const games = [...data.games].sort((a, b) => b.installedAt - a.installedAt);
+  return { games, summary };
 }
 async function launchGame(id) {
   const game = await getGame(id);
@@ -287,41 +399,53 @@ function extractFailure(output) {
 }
 const execFileAsync$2 = util.promisify(child_process.execFile);
 let cached;
-async function findPython() {
+async function probe(cmd, args) {
+  try {
+    const { stdout, stderr } = await execFileAsync$2(cmd, [...args, "--version"], {
+      windowsHide: true,
+      timeout: 1e4
+    });
+    return /Python\s+3\./i.test(`${stdout}${stderr}`);
+  } catch {
+    return false;
+  }
+}
+async function pythonInvocation() {
   if (cached !== void 0) return cached;
+  const bundled = bundledPythonExe();
+  if (fs.existsSync(bundled) && await probe(bundled, [])) {
+    cached = { cmd: bundled, args: [], bundled: true };
+    return cached;
+  }
   const candidates = [
-    { cmd: "py", prefixArgs: ["-3"] },
-    { cmd: "python", prefixArgs: [] },
-    { cmd: "python3", prefixArgs: [] }
+    { cmd: "py", args: ["-3"], bundled: false },
+    { cmd: "python", args: [], bundled: false },
+    { cmd: "python3", args: [], bundled: false }
   ];
-  for (const { cmd, prefixArgs } of candidates) {
-    try {
-      const { stdout, stderr } = await execFileAsync$2(cmd, [...prefixArgs, "--version"], {
-        windowsHide: true,
-        timeout: 1e4
-      });
-      const out = `${stdout}${stderr}`;
-      if (/Python\s+3\./i.test(out)) {
-        cached = prefixArgs.length ? `${cmd} ${prefixArgs.join(" ")}` : cmd;
-        return cached;
-      }
-    } catch {
+  for (const candidate of candidates) {
+    if (await probe(candidate.cmd, candidate.args)) {
+      cached = candidate;
+      return cached;
     }
   }
   cached = null;
   return null;
 }
+async function findPython() {
+  const invocation = await pythonInvocation();
+  if (!invocation) return null;
+  return invocation.args.length ? `${invocation.cmd} ${invocation.args.join(" ")}` : invocation.cmd;
+}
 async function unwrapSelf(input, output, verbose = false) {
-  const python = await findPython();
+  const python = await pythonInvocation();
   if (!python) {
     throw new Error(
-      "Python 3 was not found on this system. Install Python 3 (python.org) so the SELF unwrap step can run."
+      "No Python 3 interpreter is available. NovaPS5 bundles one — repair or reinstall the app."
     );
   }
-  const [cmd, ...prefix] = python.split(" ").filter(Boolean);
-  const args = [...prefix, unwrapScriptPath(), input, output];
+  const args = [...python.args, unwrapScriptPath(), input, output];
   if (verbose) args.push("--verbose");
-  const { code, stdout, stderr } = await run(cmd, args, { timeoutMs: 10 * 60 * 1e3 });
+  const { code, stdout, stderr } = await run(python.cmd, args, { timeoutMs: 10 * 60 * 1e3 });
   if (code !== 0) {
     const detail = /not a SELF container/i.test(stderr) ? `${path.basename(input)} is not a SELF container.` : /looks encrypted/i.test(stderr) ? `${path.basename(input)} is still encrypted — dump it decrypted before converting.` : stderr.trim() || stdout.trim() || `exit code ${code}`;
     throw new Error(`Unwrap failed — ${detail}`);
@@ -648,18 +772,18 @@ async function checkCompatibility(root) {
   }
   let needed = null;
   if (kind === "self") {
-    const python = await findPython();
+    const python = await pythonInvocation();
     checks.push(
       python ? {
         id: "python",
         label: "Python",
         status: "pass",
-        detail: "Python 3 available for the SELF unwrap step."
+        detail: python.bundled ? "Bundled Python is available for the SELF unwrap step." : "Python 3 available for the SELF unwrap step."
       } : {
         id: "python",
         label: "Python",
         status: "fail",
-        detail: "Python 3 is required to unwrap SELF containers — install it from python.org."
+        detail: "The bundled Python is missing — repair or reinstall NovaPS5."
       }
     );
     if (python) {
@@ -1058,7 +1182,7 @@ async function probeLaunch(exePath, cwd, ms = 1e4) {
   return new Promise((resolve) => {
     let settled = false;
     let timer;
-    const finish = (probe) => {
+    const finish = (probe2) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
@@ -1067,7 +1191,7 @@ async function probeLaunch(exePath, cwd, ms = 1e4) {
         fs.rmSync(logPath, { force: true });
       } catch {
       }
-      resolve(probe);
+      resolve(probe2);
     };
     let child;
     try {
@@ -1338,11 +1462,11 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     activeStages.delete(stageName);
     stageDir = null;
     emit("Launch test — starting the game…", 97, "launch-test");
-    let probe = { state: "failed", detail: "the launch test could not start" };
+    let probe2 = { state: "failed", detail: "the launch test could not start" };
     try {
-      probe = await probeLaunch(path.join(finalDir, path.basename(exePath)), finalDir);
+      probe2 = await probeLaunch(path.join(finalDir, path.basename(exePath)), finalDir);
     } catch (error) {
-      probe = { state: "failed", detail: error instanceof Error ? error.message : String(error) };
+      probe2 = { state: "failed", detail: error instanceof Error ? error.message : String(error) };
     }
     const sizeBytes = await dirSize(finalDir);
     const game = {
@@ -1356,20 +1480,20 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       cover,
       status: "ready",
       installedAt: Date.now(),
-      launchState: probe.state,
-      launchDetail: probe.detail
+      launchState: probe2.state,
+      launchDetail: probe2.detail
     };
     await addGame(game);
     report({
       jobId,
       step: "done",
-      message: probe.state === "works" ? "Installed — launch test passed, the game is running" : "Installed — launch test failed",
+      message: probe2.state === "works" ? "Installed — launch test passed, the game is running" : "Installed — launch test failed",
       percent: 100,
       status: "done",
       gameId: id,
       gameName: name,
-      launchState: probe.state,
-      launchDetail: probe.detail
+      launchState: probe2.state,
+      launchDetail: probe2.detail
     });
     return game;
   } catch (error) {
@@ -1624,9 +1748,9 @@ function installTarget() {
   const current = toolsDir();
   try {
     ensureDir(current);
-    const probe = path.join(current, `.write-probe-${process.pid}`);
-    fs.writeFileSync(probe, "");
-    fs.rmSync(probe, { force: true });
+    const probe2 = path.join(current, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probe2, "");
+    fs.rmSync(probe2, { force: true });
     return current;
   } catch {
     const fallback = path.join(electron.app.getPath("userData"), "tools");
@@ -1846,6 +1970,7 @@ async function appInfo() {
     relinkerPresent: relinker,
     libsPresent: libs,
     pythonPath: await findPython(),
+    pythonBundled: (await pythonInvocation())?.bundled ?? false,
     libraryRoot: libraryRoot(),
     gamesDir: gamesRoot(),
     runtimeVersion: readRuntimeManifest()?.version ?? null,
@@ -1871,6 +1996,7 @@ function registerIpc(getWindow) {
   });
   electron.ipcMain.handle("library:detect", (_e, sourcePath) => detectDump(sourcePath));
   electron.ipcMain.handle("library:list", () => listGames());
+  electron.ipcMain.handle("library:scan", () => scanLibrary());
   electron.ipcMain.handle("game:launch", (_e, id) => launchGame(id));
   electron.ipcMain.handle("game:remove", async (_e, id) => {
     await removeGame(id);
@@ -1898,14 +2024,38 @@ electron.protocol.registerSchemesAsPrivileged([
   { scheme: "media", privileges: { standard: true, secure: true, supportFetchAPI: true } }
 ]);
 let mainWindow = null;
+let tray = null;
+let isQuitting = false;
+function iconPath() {
+  return electron.app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.join(electron.app.getAppPath(), "public", "icon.png");
+}
+const iconFile = () => electron.app.isPackaged ? path.join(process.resourcesPath, "icon.ico") : path.join(electron.app.getAppPath(), "build", "icon.ico");
+function showWindow() {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+function askInstall() {
+  showWindow();
+  mainWindow?.webContents.send("ui:install");
+}
 function createWindow() {
+  const { workAreaSize } = electron.screen.getPrimaryDisplay();
+  const width = Math.min(1280, Math.max(980, workAreaSize.width - 48));
+  const height = Math.min(820, Math.max(620, workAreaSize.height - 48));
   mainWindow = new electron.BrowserWindow({
-    width: 1280,
-    height: 820,
-    minWidth: 980,
-    minHeight: 620,
+    width,
+    height,
+    minWidth: Math.min(980, width),
+    minHeight: Math.min(620, height),
+    center: true,
     show: false,
     backgroundColor: "#09090b",
+    icon: fs.existsSync(iconFile()) ? iconFile() : iconPath(),
     titleBarStyle: "hidden",
     titleBarOverlay: { color: "#09090b", symbolColor: "#a1a1aa", height: 40 },
     webPreferences: {
@@ -1916,6 +2066,11 @@ function createWindow() {
     }
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());
+  mainWindow.on("close", (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow?.minimize();
+  });
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -1925,7 +2080,67 @@ function createWindow() {
     mainWindow = null;
   });
 }
-electron.app.whenReady().then(() => {
+function createTray() {
+  try {
+    const source = fs.existsSync(iconFile()) ? iconFile() : iconPath();
+    const image = electron.nativeImage.createFromPath(source);
+    tray = new electron.Tray(image.isEmpty() ? electron.nativeImage.createEmpty() : image.resize({ width: 16, height: 16 }));
+    tray.setToolTip("NovaPS5");
+    tray.setContextMenu(
+      electron.Menu.buildFromTemplate([
+        { label: "Open NovaPS5", click: showWindow },
+        { label: "Install a game…", click: askInstall },
+        { type: "separator" },
+        {
+          label: "Quit NovaPS5",
+          click: () => {
+            isQuitting = true;
+            electron.app.quit();
+          }
+        }
+      ])
+    );
+    tray.on("double-click", showWindow);
+  } catch {
+    tray = null;
+  }
+}
+function buildMenu() {
+  electron.Menu.setApplicationMenu(
+    electron.Menu.buildFromTemplate([
+      {
+        label: "File",
+        submenu: [
+          { label: "Install a game…", accelerator: "CmdOrCtrl+O", click: askInstall },
+          { type: "separator" },
+          {
+            label: "Quit NovaPS5",
+            accelerator: "CmdOrCtrl+Q",
+            click: () => {
+              isQuitting = true;
+              electron.app.quit();
+            }
+          }
+        ]
+      },
+      {
+        label: "View",
+        submenu: [
+          { role: "reload" },
+          { role: "forceReload" },
+          { role: "toggleDevTools" },
+          { type: "separator" },
+          { role: "resetZoom" },
+          { role: "zoomIn" },
+          { role: "zoomOut" },
+          { type: "separator" },
+          { role: "togglefullscreen" }
+        ]
+      }
+    ])
+  );
+}
+function registerMediaProtocol() {
   electron.protocol.handle("media", async (request) => {
     try {
       const url = new URL(request.url);
@@ -1945,12 +2160,28 @@ electron.app.whenReady().then(() => {
       return new Response("not found", { status: 404 });
     }
   });
-  ensureDir(gamesRoot());
-  registerIpc(() => mainWindow);
-  createWindow();
-  electron.app.on("activate", () => {
-    if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();
+}
+const gotLock = electron.app.requestSingleInstanceLock();
+if (!gotLock) {
+  electron.app.quit();
+} else {
+  electron.app.on("second-instance", () => showWindow());
+  electron.app.setAppUserModelId("com.novaps5.app");
+  electron.app.whenReady().then(() => {
+    registerMediaProtocol();
+    ensureDir(gamesRoot());
+    registerIpc(() => mainWindow);
+    buildMenu();
+    createWindow();
+    createTray();
+    electron.app.on("activate", () => {
+      if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();
+      else showWindow();
+    });
   });
+}
+electron.app.on("before-quit", () => {
+  isQuitting = true;
 });
 electron.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") electron.app.quit();

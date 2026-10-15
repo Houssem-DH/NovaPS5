@@ -2,7 +2,10 @@
 # On first launch the app downloads it from the repo's GitHub Releases
 # (see resources/README.md); `npm run pack:runtime` builds that release asset.
 /resources/tools
+# Bundled Python runtime — fetched by `npm run setup:python` / the dist scripts.
+/resources/python
 /resources/*.bak
+/resources/python-*.zip
 
 
 /node_modules

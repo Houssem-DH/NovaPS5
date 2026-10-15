@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppInfo, Game, InstallProgress } from '@shared/types'
+import type { AppInfo, Game, InstallProgress, LibraryScanResult } from '@shared/types'
 
 export type View = 'library' | 'settings'
 
@@ -16,6 +16,8 @@ interface LibraryState {
 
   load: () => Promise<void>
   refreshInfo: () => Promise<void>
+  /** Re-read the library from disk, adopting installs missing from the index. */
+  scan: () => Promise<LibraryScanResult>
   select: (id: string | null) => void
   setView: (view: View) => void
   setInstallOpen: (open: boolean) => void
@@ -44,6 +46,14 @@ export const useLibrary = create<LibraryState>((set, get) => ({
   refreshInfo: async () => {
     const appInfo = await window.api.appInfo()
     set({ appInfo })
+  },
+
+  scan: async () => {
+    // Deliberately does not flip `loading` — the grid stays visible while a
+    // scan runs; the button shows its own spinner.
+    const result = await window.api.scan()
+    set({ games: result.games })
+    return result
   },
 
   select: (id) => set({ selectedId: id }),

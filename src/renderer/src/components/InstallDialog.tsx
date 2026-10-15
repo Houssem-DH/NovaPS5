@@ -78,7 +78,7 @@ export function InstallDialog() {
 
   return (
     <Dialog open={installOpen} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[86vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Install a game</DialogTitle>
           <DialogDescription>
@@ -88,20 +88,20 @@ export function InstallDialog() {
 
         {showProgress ? (
           <div className="space-y-4 py-2">
-            <div className="flex items-center gap-3">
+            <div className="flex items-start gap-3">
               {done ? (
                 launchFailed ? (
-                  <XCircle className="h-6 w-6 shrink-0 text-red-400" />
+                  <XCircle className="mt-0.5 h-6 w-6 shrink-0 text-red-400" />
                 ) : (
-                  <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-400" />
+                  <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-400" />
                 )
               ) : failed ? (
-                <AlertTriangle className="h-6 w-6 shrink-0 text-red-400" />
+                <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-red-400" />
               ) : (
-                <Loader2 className="h-6 w-6 shrink-0 animate-spin text-primary" />
+                <Loader2 className="mt-0.5 h-6 w-6 shrink-0 animate-spin text-primary" />
               )}
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">
+                <p className="break-all text-sm font-medium leading-snug" title={installing?.message}>
                   {done
                     ? launchFailed
                       ? 'Installed — launch test failed'
@@ -113,7 +113,7 @@ export function InstallDialog() {
                       : installing?.message}
                 </p>
                 {installing?.gameName && done && (
-                  <p className="truncate text-xs text-muted-foreground">{installing.gameName}</p>
+                  <p className="break-words text-xs text-muted-foreground">{installing.gameName}</p>
                 )}
                 {done && launchFailed && (
                   <p className="mt-1 break-all text-xs text-red-300">
@@ -129,7 +129,7 @@ export function InstallDialog() {
                   <p className="mt-1 break-all text-xs text-red-400/90">{installing.error}</p>
                 )}
               </div>
-              <span className="text-sm tabular-nums text-muted-foreground">
+              <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
                 {installing?.percent ?? 0}%
               </span>
             </div>
@@ -207,9 +207,9 @@ export function InstallDialog() {
 
             {detect?.isDump && (
               <div className="space-y-3 rounded-xl border border-border/60 bg-card/50 p-4">
-                <div>
-                  <div className="font-medium">{detect.name}</div>
-                  <div className="text-xs text-muted-foreground">
+                <div className="min-w-0">
+                  <div className="break-words font-medium">{detect.name}</div>
+                  <div className="break-words text-xs text-muted-foreground">
                     {detect.titleId ?? 'Unknown title ID'} · {formatBytes(detect.sizeBytes ?? 0)}
                     {detect.hasCover ? ' · cover art found' : ''}
                   </div>
@@ -245,7 +245,7 @@ export function InstallDialog() {
                       ) : (
                         <XCircle className="mt-px h-3.5 w-3.5 shrink-0 text-red-400" />
                       )}
-                      <span className="min-w-0">
+                      <span className="min-w-0 break-words leading-snug">
                         <span className="font-medium">{check.label}</span>{' '}
                         <span className="text-muted-foreground">{check.detail}</span>
                       </span>

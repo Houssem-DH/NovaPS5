@@ -127,14 +127,11 @@ export function BootstrapScreen({ onDone }: { onDone: (result: BootstrapResult) 
   }, [attempt])
 
   return (
-    <div className="app-bg flex h-screen items-center justify-center overflow-hidden bg-background">
+    <div className="app-bg drag-region flex h-screen items-center justify-center overflow-hidden bg-background">
       <div className="w-full max-w-md px-8">
         <div className="mb-9 flex flex-col items-center text-center">
-          <img src="logo.png" alt="NovaPS5" className="h-16 w-16 rounded-2xl shadow-xl shadow-primary/20" />
-          <h1 className="mt-4 text-2xl font-semibold tracking-tight">
-            Nova<span className="text-primary">PS5</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <img src="logo.png" alt="NovaPS5" className="brand-glow h-auto w-56 select-none" />
+          <p className="mt-3 text-sm text-muted-foreground">
             {error ? 'Runtime setup needs attention' : 'Preparing the conversion runtime…'}
           </p>
         </div>
@@ -154,7 +151,7 @@ export function BootstrapScreen({ onDone }: { onDone: (result: BootstrapResult) 
           </div>
         )}
 
-        <div className="mt-7 flex items-center justify-center gap-3">
+        <div className="no-drag mt-7 flex items-center justify-center gap-3">
           {error ? (
             <Button onClick={() => setAttempt((n) => n + 1)}>
               <RefreshCw className="h-4 w-4" /> Try again

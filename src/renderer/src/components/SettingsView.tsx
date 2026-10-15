@@ -2,42 +2,64 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   CheckCircle2,
-  Download,
-  Folder,
+  Database,
   FolderOpen,
   Loader2,
   Package,
   RefreshCw,
+  ShieldCheck,
   Terminal,
   Wrench,
   XCircle
 } from 'lucide-react'
 import { useLibrary } from '@/store/useLibrary'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
+
+function Section({
+  title,
+  description,
+  children
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+}) {
+  return (
+    <section className="mb-8">
+      <div className="mb-3">
+        <h2 className="section-label">{title}</h2>
+        {description && <p className="mt-1 text-xs text-muted-foreground">{description}</p>}
+      </div>
+      <div className="space-y-2.5">{children}</div>
+    </section>
+  )
+}
 
 function Row({
   icon: Icon,
   label,
   value,
   ok,
+  badge,
   action
 }: {
-  icon: typeof Folder
+  icon: typeof FolderOpen
   label: string
   value: string
   ok?: boolean
+  badge?: ReactNode
   action?: ReactNode
 }) {
   return (
-    <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-card/50 p-4">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary">
+    <div className="panel flex items-start gap-3.5 p-4 transition-colors hover:border-border">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary/70">
         <Icon className="h-4 w-4 text-primary" />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 text-sm font-medium">
+        <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
           {label}
+          {badge}
           {ok !== undefined &&
             (ok ? (
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />
@@ -45,10 +67,25 @@ function Row({
               <XCircle className="h-4 w-4 text-red-400" />
             ))}
         </div>
-        <div className="mt-0.5 break-all text-xs text-muted-foreground">{value}</div>
+        <div className="mt-1 break-all text-xs text-muted-foreground">{value}</div>
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="shrink-0 self-center">{action}</div>}
     </div>
+  )
+}
+
+function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'muted'; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        'rounded-full border px-2 py-0.5 text-[11px] font-medium',
+        tone === 'ok' && 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+        tone === 'warn' && 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+        tone === 'muted' && 'border-border bg-secondary/60 text-muted-foreground'
+      )}
+    >
+      {children}
+    </span>
   )
 }
 
@@ -71,7 +108,9 @@ export function SettingsView() {
     setChecking(false)
   }
 
-  const checkUpdates = async (): Promise<void> => {
+  // "Scan for updates" (re)checks the repo and only downloads when a newer
+  // runtime exists — an up-to-date runtime is left untouched.
+  const scanForUpdates = async (): Promise<void> => {
     setUpdating(true)
     setRuntimeMsg(null)
     const result = await window.api.runBootstrap()
@@ -105,58 +144,63 @@ export function SettingsView() {
   }
 
   const pythonOk = !!appInfo?.pythonPath
-  const toolsOk = appInfo?.relinkerPresent && appInfo?.libsPresent
+  const toolsOk = !!appInfo?.relinkerPresent && !!appInfo?.libsPresent
+  const runtimeOk = toolsOk
   const allOk = pythonOk && toolsOk
 
   return (
-    <div className="max-w-2xl">
-      <div className="mb-7 flex items-end justify-between gap-4">
+    <div className="max-w-3xl">
+      <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-          <p className="text-sm text-muted-foreground">Runtime updates, library locations, and tooling.</p>
+          <p className="text-sm text-muted-foreground">Runtime, storage locations, and conversion tooling.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={checkUpdates} disabled={updating}>
-            <Download className={cn('h-4 w-4', updating && 'animate-pulse')} />
-            {updating ? 'Checking…' : 'Check for updates'}
-          </Button>
-          <Button variant="outline" size="sm" onClick={recheck} disabled={checking}>
-            <RefreshCw className={cn('h-4 w-4', checking && 'animate-spin')} /> Re-check
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" onClick={recheck} disabled={checking}>
+          <RefreshCw className={cn('h-4 w-4', checking && 'animate-spin')} /> Re-check
+        </Button>
       </div>
 
       <div
         className={cn(
-          'mb-5 flex items-center gap-2.5 rounded-xl border p-4 text-sm',
+          'mb-8 flex items-center gap-3 rounded-2xl border p-4 text-sm',
           allOk
-            ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-            : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+            ? 'border-emerald-500/25 bg-emerald-500/[0.07] text-emerald-200'
+            : 'border-amber-500/25 bg-amber-500/[0.07] text-amber-200'
         )}
       >
-        {allOk ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}
-        {allOk
-          ? 'Everything is ready — games can be converted and played.'
-          : 'Some components are missing. Conversion may fail until they are resolved.'}
+        {allOk ? <ShieldCheck className="h-5 w-5 shrink-0" /> : <XCircle className="h-5 w-5 shrink-0" />}
+        <span>
+          {allOk
+            ? 'Everything is ready — games can be converted and played.'
+            : 'Some components are missing. Conversion may fail until they are resolved.'}
+        </span>
       </div>
 
-      <div className="space-y-3">
+      <Section title="Conversion runtime" description="Downloaded from the AnyPS5 releases; updated automatically.">
         <Row
           icon={Package}
-          label="Conversion runtime"
+          label="Runtime"
           value={
             appInfo?.runtimeVersion
-              ? `v${appInfo.runtimeVersion} — github.com/${appInfo.runtimeRepo}`
+              ? `v${appInfo.runtimeVersion} · github.com/${appInfo.runtimeRepo}`
               : 'Not installed yet — installs automatically on launch'
           }
-          ok={toolsOk}
+          badge={runtimeOk ? <Pill tone="ok">Up to date</Pill> : <Pill tone="warn">Not installed</Pill>}
           action={
-            <Button variant="outline" size="sm" onClick={checkUpdates} disabled={updating}>
-              {updating && <Loader2 className="h-4 w-4 animate-spin" />}
-              {updating ? 'Working…' : 'Update'}
+            <Button variant="outline" size="sm" onClick={scanForUpdates} disabled={updating}>
+              {updating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {updating ? 'Scanning…' : runtimeOk ? 'Scan for updates' : 'Install runtime'}
             </Button>
           }
         />
+        {runtimeMsg && (
+          <p className="px-1 text-xs text-muted-foreground" role="status">
+            {runtimeMsg}
+          </p>
+        )}
+      </Section>
+
+      <Section title="Storage" description="Where installed games are kept. Changing it moves your existing games.">
         <Row
           icon={FolderOpen}
           label="Games folder"
@@ -168,10 +212,22 @@ export function SettingsView() {
             </Button>
           }
         />
+        {gamesMsg && (
+          <p className="px-1 text-xs text-muted-foreground" role="status">
+            {gamesMsg}
+          </p>
+        )}
+        <p className="px-1 text-xs leading-relaxed text-muted-foreground">
+          Every already-installed game is relocated into the new folder — large libraries can take a while. Nothing is
+          deleted if a move fails.
+        </p>
+      </Section>
+
+      <Section title="Components" description="Shipped with the app — nothing to install by hand.">
         <Row
           icon={Wrench}
           label="Relinker"
-          value={appInfo?.relinkerPresent ? 'relinker.exe found' : 'relinker.exe missing — it installs automatically'}
+          value={appInfo?.relinkerPresent ? 'relinker.exe present' : 'Missing — it installs automatically on launch'}
           ok={appInfo?.relinkerPresent}
         />
         <Row
@@ -183,38 +239,32 @@ export function SettingsView() {
         <Row
           icon={Terminal}
           label="Python 3"
-          value={pythonOk ? `Detected: ${appInfo?.pythonPath}` : 'Python 3 not found (needed for SELF unwrapping)'}
+          value={
+            pythonOk
+              ? appInfo?.pythonBundled
+                ? 'Bundled with NovaPS5 — no separate install required'
+                : `Detected: ${appInfo?.pythonPath}`
+              : 'Missing — repair or reinstall NovaPS5'
+          }
           ok={pythonOk}
+          badge={appInfo?.pythonBundled ? <Pill tone="muted">Bundled</Pill> : undefined}
         />
-        <Row icon={Folder} label="Library folder" value={appInfo?.libraryRoot ?? '…'} />
-        <Row icon={Folder} label="Tools folder" value={appInfo?.toolsDir ?? '…'} />
-      </div>
+        <Row
+          icon={Database}
+          label="Tools folder"
+          value={appInfo?.toolsDir ?? '…'}
+        />
+      </Section>
 
-      {runtimeMsg && (
-        <p className="mt-3 text-xs text-muted-foreground" role="status">
-          {runtimeMsg}
-        </p>
-      )}
-      <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-        Changing the games folder relocates every already-installed game into the new location — large libraries can
-        take a while.
-      </p>
-      {gamesMsg && (
-        <p className="mt-1 text-xs text-muted-foreground" role="status">
-          {gamesMsg}
-        </p>
-      )}
-
-      <Separator className="my-7" />
-
-      <div className="text-xs leading-relaxed text-muted-foreground">
-        <p className="font-medium text-foreground/80">How it works</p>
-        <p className="mt-1">
-          Each install unwraps the game&apos;s SELF modules to ELF, runs the AnyPS5 relinker to build a Windows
-          executable, and arranges the <code className="rounded bg-secondary px-1">app0/</code> runtime layout.
-          Conversion uses your local dump only — nothing is downloaded.
-        </p>
-      </div>
+      <Section title="About">
+        <div className="panel p-4 text-xs leading-relaxed text-muted-foreground">
+          <p>
+            Each install unwraps the game&apos;s SELF modules to ELF, runs the AnyPS5 relinker to build a Windows
+            executable, arranges the <code className="rounded bg-secondary px-1">app0/</code> runtime layout, then
+            launches the game once to verify it works. Conversion uses your local dump only — nothing is uploaded.
+          </p>
+        </div>
+      </Section>
     </div>
   )
 }

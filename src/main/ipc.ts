@@ -1,10 +1,10 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
-import { listGames, removeGame } from './library'
+import { listGames, removeGame, scanLibrary } from './library'
 import { launchGame } from './launch'
 import { installGame } from './pipeline/install'
 import { detectDump } from './pipeline/dump'
-import { findPython } from './python'
+import { findPython, pythonInvocation } from './python'
 import { ensureRuntime, readRuntimeManifest } from './runtime'
 import { setGamesDir } from './settings'
 import { toolsDir, runtimeLibsDir, libraryRoot, gamesRoot, runtimeRepo, toolingPresent } from './paths'
@@ -17,6 +17,7 @@ async function appInfo(): Promise<AppInfo> {
     relinkerPresent: relinker,
     libsPresent: libs,
     pythonPath: await findPython(),
+    pythonBundled: (await pythonInvocation())?.bundled ?? false,
     libraryRoot: libraryRoot(),
     gamesDir: gamesRoot(),
     runtimeVersion: readRuntimeManifest()?.version ?? null,
@@ -46,6 +47,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle('library:detect', (_e, sourcePath: string) => detectDump(sourcePath))
   ipcMain.handle('library:list', () => listGames())
+  ipcMain.handle('library:scan', () => scanLibrary())
   ipcMain.handle('game:launch', (_e, id: string) => launchGame(id))
   ipcMain.handle('game:remove', async (_e, id: string) => {
     await removeGame(id)

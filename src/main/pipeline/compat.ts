@@ -5,7 +5,7 @@ import path from 'path'
 import { detectContainer, readMagicHex } from './elf'
 import { readMeta } from './dump'
 import { unwrapSelf } from './unwrap'
-import { findPython } from '../python'
+import { pythonInvocation } from '../python'
 import { toolingPresent, runtimeLibsDir } from '../paths'
 import type { CompatCheck } from '@shared/types'
 
@@ -247,20 +247,22 @@ export async function checkCompatibility(root: string): Promise<CompatReport> {
   // ---- Python + trial unwrap (only relevant for SELF eboots) -------------
   let needed: string[] | null = null
   if (kind === 'self') {
-    const python = await findPython()
+    const python = await pythonInvocation()
     checks.push(
       python
         ? {
             id: 'python',
             label: 'Python',
             status: 'pass',
-            detail: 'Python 3 available for the SELF unwrap step.'
+            detail: python.bundled
+              ? 'Bundled Python is available for the SELF unwrap step.'
+              : 'Python 3 available for the SELF unwrap step.'
           }
         : {
             id: 'python',
             label: 'Python',
             status: 'fail',
-            detail: 'Python 3 is required to unwrap SELF containers — install it from python.org.'
+            detail: 'The bundled Python is missing — repair or reinstall NovaPS5.'
           }
     )
 
