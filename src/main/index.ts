@@ -4,6 +4,8 @@ import fs from 'fs'
 import { registerIpc } from './ipc'
 import { gamesRoot, ensureDir } from './paths'
 import { getGame } from './library'
+import { initUpdater, checkForUpdates } from './updater'
+import { beginQuit, isQuitting } from './lifecycle'
 
 // Must be registered before app ready. media:// serves cover images out of the
 // library folder without exposing the whole filesystem to the renderer.
@@ -13,8 +15,8 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-/** True only for a real quit (menu / tray) — closing the window minimizes it. */
-let isQuitting = false
+/** The "still running in the tray" hint is shown once per session. */
+let trayHintShown = false
 
 /** Square brand icon used for the window and the tray. */
 function iconPath(): string {
@@ -34,6 +36,21 @@ function showWindow(): void {
   if (mainWindow.isMinimized()) mainWindow.restore()
   if (!mainWindow.isVisible()) mainWindow.show()
   mainWindow.focus()
+}
+
+/** Parks the window in the tray (no taskbar button) while the app keeps running. */
+function hideToTray(): void {
+  mainWindow?.hide()
+  if (trayHintShown || !tray) return
+  trayHintShown = true
+  try {
+    tray.displayBalloon({
+      title: 'NovaPS5 is still running',
+      content: 'Click the tray icon to bring the window back — Quit in its menu closes the app.'
+    })
+  } catch {
+    // balloons are unsupported on some shells; never let that break the hide
+  }
 }
 
 function askInstall(): void {
@@ -69,14 +86,16 @@ function createWindow(): void {
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
 
-  // Closing the window keeps NovaPS5 alive: it minimizes to the taskbar so a
-  // click on the taskbar button brings it straight back. Quit from the tray
-  // menu or File ▸ Quit (Ctrl+Q) to really exit.
+  // Closing the window keeps NovaPS5 alive: the window is parked in the tray so
+  // a click on the tray icon brings it straight back. Quit from the tray menu,
+  // File ▸ Quit (Ctrl+Q), or the tray icon to really exit.
   mainWindow.on('close', (event) => {
-    if (isQuitting) return
+    if (isQuitting()) return
     event.preventDefault()
-    mainWindow?.minimize()
+    hideToTray()
   })
+
+  attachContextMenu(mainWindow)
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -86,6 +105,32 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+}
+
+/**
+ * Right-click menu for text: copy a selection, paste into a field, or select the
+ * whole page. Without this a frameless Electron window has no context menu at
+ * all, which makes error messages and file paths impossible to copy out.
+ */
+function attachContextMenu(window: BrowserWindow): void {
+  window.webContents.on('context-menu', (_event, params) => {
+    const hasSelection = params.selectionText.trim().length > 0
+    const items: Electron.MenuItemConstructorOptions[] = []
+
+    if (params.isEditable) {
+      items.push(
+        { role: 'cut', label: 'Cut', enabled: hasSelection },
+        { role: 'copy', label: 'Copy', enabled: hasSelection },
+        { role: 'paste', label: 'Paste' },
+        { type: 'separator' },
+        { role: 'selectAll', label: 'Select all' }
+      )
+    } else if (hasSelection) {
+      items.push({ role: 'copy', label: 'Copy' }, { type: 'separator' }, { role: 'selectAll', label: 'Select all' })
+    }
+
+    if (items.length) Menu.buildFromTemplate(items).popup({ window })
   })
 }
 
@@ -99,17 +144,19 @@ function createTray(): void {
       Menu.buildFromTemplate([
         { label: 'Open NovaPS5', click: showWindow },
         { label: 'Install a game…', click: askInstall },
+        { label: 'Check for updates…', click: () => void checkForUpdates(true) },
         { type: 'separator' },
         {
           label: 'Quit NovaPS5',
           click: () => {
-            isQuitting = true
+            beginQuit()
             app.quit()
           }
         }
       ])
     )
     tray.on('double-click', showWindow)
+    tray.on('click', showWindow)
   } catch {
     tray = null // a tray is a convenience — never block startup over it
   }
@@ -122,15 +169,28 @@ function buildMenu(): void {
         label: 'File',
         submenu: [
           { label: 'Install a game…', accelerator: 'CmdOrCtrl+O', click: askInstall },
+          { label: 'Check for updates…', click: () => void checkForUpdates(true) },
           { type: 'separator' },
           {
             label: 'Quit NovaPS5',
             accelerator: 'CmdOrCtrl+Q',
             click: () => {
-              isQuitting = true
+              beginQuit()
               app.quit()
             }
           }
+        ]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' }
         ]
       },
       {
@@ -202,6 +262,7 @@ if (!gotLock) {
     buildMenu()
     createWindow()
     createTray()
+    initUpdater(() => mainWindow)
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -211,7 +272,7 @@ if (!gotLock) {
 }
 
 app.on('before-quit', () => {
-  isQuitting = true
+  beginQuit()
 })
 
 app.on('window-all-closed', () => {

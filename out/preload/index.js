@@ -28,6 +28,17 @@ const api = {
     const listener = () => cb();
     electron.ipcRenderer.on("ui:install", listener);
     return () => electron.ipcRenderer.removeListener("ui:install", listener);
-  }
+  },
+  updateState: () => electron.ipcRenderer.invoke("update:state"),
+  checkForUpdates: () => electron.ipcRenderer.invoke("update:check"),
+  installUpdate: () => electron.ipcRenderer.invoke("update:install"),
+  onUpdateState: (cb) => {
+    const listener = (_event, state) => cb(state);
+    electron.ipcRenderer.on("update:state", listener);
+    return () => electron.ipcRenderer.removeListener("update:state", listener);
+  },
+  whatsNew: () => electron.ipcRenderer.invoke("update:whatsNew"),
+  dismissWhatsNew: () => electron.ipcRenderer.invoke("update:dismissWhatsNew"),
+  openExternal: (url) => electron.ipcRenderer.invoke("app:openExternal", url)
 };
 electron.contextBridge.exposeInMainWorld("api", api);

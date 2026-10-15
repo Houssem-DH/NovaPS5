@@ -1,13 +1,13 @@
 {
   "name": "novaps5",
   "productName": "NovaPS5",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "runtimeVersion": "1.0.0",
-  "description": "A modern PS5 games library by Nova Crafted that converts and plays dumps via the AnyPS5 relinker.",
+  "description": "A desktop library, converter and launcher for PS5 game dumps by Nova Crafted, built on the AnyPS5 conversion engine.",
   "main": "out/main/index.js",
   "author": "Nova Crafted",
-  "copyright": "Copyright © 2026 Nova Crafted",
-  "license": "MIT",
+  "copyright": "Copyright © 2026 Nova Crafted. Includes AnyPS5 (GPL-2.0) by boykopovar.",
+  "license": "GPL-2.0-or-later",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -32,6 +32,7 @@
     "@radix-ui/react-tooltip": "^1.1.2",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9",
     "framer-motion": "^11.3.0",
     "lucide-react": "^0.417.0",
     "react": "^18.3.1",
@@ -64,7 +65,16 @@
     "files": [
       "out/**/*",
       "scripts/unwrap_self.py",
-      "package.json"
+      "package.json",
+      "LICENSE"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Houssem-DH",
+        "repo": "NovaPS5",
+        "releaseType": "release"
+      }
     ],
     "extraResources": [
       {

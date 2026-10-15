@@ -5,6 +5,9 @@ import fs from 'fs'
 /** GitHub repo (owner/name) queried for runtime releases. Overridable via config.json. */
 export const DEFAULT_RUNTIME_REPO = 'boykopovar/AnyPS5'
 
+/** This app's own repository — the source of its releases and update feed. */
+export const APP_REPO = 'Houssem-DH/NovaPS5'
+
 export interface AppConfig {
   /** Absolute games folder; undefined/null = default (<libraryRoot>/games). */
   gamesDir?: string | null

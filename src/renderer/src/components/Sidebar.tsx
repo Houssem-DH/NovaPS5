@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Library, Settings, Plus, Cpu } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -40,36 +39,11 @@ function NavItem({
 
 export function Sidebar() {
   const { view, setView, setInstallOpen, appInfo } = useLibrary()
-  const [logoOk, setLogoOk] = useState(true)
   const toolsReady = !!appInfo && appInfo.relinkerPresent && appInfo.libsPresent && !!appInfo.pythonPath
 
   return (
     <aside className="relative flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-sm">
-      {/* Brand — square app icon, matching what Windows shows for the exe */}
-      <div className="px-5 pb-5 pt-6">
-        <div className="flex items-center gap-2.5">
-          {logoOk && (
-            <img
-              src="icon.png"
-              alt=""
-              draggable={false}
-              onError={() => setLogoOk(false)}
-              className="brand-glow h-9 w-9 shrink-0 select-none rounded-xl"
-            />
-          )}
-          <div className="truncate text-xl font-semibold tracking-tight">
-            Nova<span className="text-primary">PS5</span>
-          </div>
-        </div>
-        <div className="mt-3 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80">
-          <span className="h-1 w-1 rounded-full bg-primary" />
-          Powered by Nova Crafted
-        </div>
-      </div>
-
-      <div className="gradient-line mx-4 h-px" />
-
-      <nav className="flex flex-1 flex-col gap-1 p-3">
+      <nav className="flex flex-1 flex-col gap-1 p-3 pt-4">
         <NavItem icon={Library} label="Library" active={view === 'library'} onClick={() => setView('library')} />
         <NavItem icon={Settings} label="Settings" active={view === 'settings'} onClick={() => setView('settings')} />
       </nav>

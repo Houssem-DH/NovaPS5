@@ -553,11 +553,32 @@ video {
   -moz-osx-font-smoothing: grayscale;
     font-feature-settings: 'cv02', 'cv03', 'cv04';
     overflow: hidden;
+    cursor: default;
+}
+
+  /* Whatever you can read, you can copy: paths, error text, release notes,
+     log lines. Controls keep their app feel and stay unselectable, so dragging
+     on a button or a nav item never selects its label. */
+  main,
+  aside,
+  [role='dialog'],
+  [data-selectable],
+  input,
+  textarea {
+    -webkit-user-select: text;
+       -moz-user-select: text;
+            user-select: text;
+  }
+
+  button,
+  [role='button'],
+  nav,
+  label,
+  summary {
     -webkit-user-select: none;
        -moz-user-select: none;
             user-select: none;
-    cursor: default;
-}
+  }
 
   ::-moz-selection {
   background-color: hsl(var(--primary) / 0.3);
@@ -582,6 +603,9 @@ video {
      everything interactive inside it stays clickable. */
   .drag-region {
     -webkit-app-region: drag;
+    -webkit-user-select: none;
+       -moz-user-select: none;
+            user-select: none;
   }
   .drag-region button,
   .drag-region input,
@@ -660,8 +684,15 @@ video {
   left: 0px;
   right: 0px;
 }
+.inset-x-1\.5 {
+  left: 0.375rem;
+  right: 0.375rem;
+}
 .bottom-0 {
   bottom: 0px;
+}
+.bottom-\[3px\] {
+  bottom: 3px;
 }
 .left-0 {
   left: 0px;
@@ -696,13 +727,21 @@ video {
 .z-50 {
   z-index: 50;
 }
-.mx-4 {
-  margin-left: 1rem;
-  margin-right: 1rem;
-}
 .mx-auto {
   margin-left: auto;
   margin-right: auto;
+}
+.my-2 {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.my-3 {
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.my-4 {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
 }
 .my-7 {
   margin-top: 1.75rem;
@@ -713,6 +752,9 @@ video {
 }
 .mb-1\.5 {
   margin-bottom: 0.375rem;
+}
+.mb-2 {
+  margin-bottom: 0.5rem;
 }
 .mb-3 {
   margin-bottom: 0.75rem;
@@ -756,6 +798,9 @@ video {
 .mt-3 {
   margin-top: 0.75rem;
 }
+.mt-4 {
+  margin-top: 1rem;
+}
 .mt-5 {
   margin-top: 1.25rem;
 }
@@ -764,6 +809,9 @@ video {
 }
 .mt-7 {
   margin-top: 1.75rem;
+}
+.mt-\[0\.45rem\] {
+  margin-top: 0.45rem;
 }
 .mt-px {
   margin-top: 1px;
@@ -776,6 +824,9 @@ video {
 }
 .inline-flex {
   display: inline-flex;
+}
+.table {
+  display: table;
 }
 .grid {
   display: grid;
@@ -840,8 +891,14 @@ video {
 .h-9 {
   height: 2.25rem;
 }
+.h-\[18px\] {
+  height: 18px;
+}
 .h-\[1px\] {
   height: 1px;
+}
+.h-\[2px\] {
+  height: 2px;
 }
 .h-auto {
   height: auto;
@@ -924,6 +981,9 @@ video {
 .w-9 {
   width: 2.25rem;
 }
+.w-\[18px\] {
+  width: 18px;
+}
 .w-\[1px\] {
   width: 1px;
 }
@@ -1000,6 +1060,9 @@ video {
   -webkit-user-select: none;
      -moz-user-select: none;
           user-select: none;
+}
+.list-none {
+  list-style-type: none;
 }
 .grid-cols-1 {
   grid-template-columns: repeat(1, minmax(0, 1fr));
@@ -1099,6 +1162,9 @@ video {
 .overflow-hidden {
   overflow: hidden;
 }
+.overflow-x-auto {
+  overflow-x: auto;
+}
 .overflow-y-auto {
   overflow-y: auto;
 }
@@ -1122,6 +1188,9 @@ video {
 .rounded-2xl {
   border-radius: 1rem;
 }
+.rounded-\[5px\] {
+  border-radius: 5px;
+}
 .rounded-full {
   border-radius: 9999px;
 }
@@ -1142,6 +1211,9 @@ video {
 }
 .border-b {
   border-bottom-width: 1px;
+}
+.border-l-2 {
+  border-left-width: 2px;
 }
 .border-r {
   border-right-width: 1px;
@@ -1172,6 +1244,9 @@ video {
 }
 .border-input {
   border-color: hsl(var(--input));
+}
+.border-primary\/40 {
+  border-color: hsl(var(--primary) / 0.4);
 }
 .border-red-500\/30 {
   border-color: rgb(239 68 68 / 0.3);
@@ -1222,6 +1297,9 @@ video {
 .bg-card\/60 {
   background-color: hsl(var(--card) / 0.6);
 }
+.bg-card\/70 {
+  background-color: hsl(var(--card) / 0.7);
+}
 .bg-card\/95 {
   background-color: hsl(var(--card) / 0.95);
 }
@@ -1255,6 +1333,12 @@ video {
 }
 .bg-primary\/15 {
   background-color: hsl(var(--primary) / 0.15);
+}
+.bg-primary\/20 {
+  background-color: hsl(var(--primary) / 0.2);
+}
+.bg-primary\/70 {
+  background-color: hsl(var(--primary) / 0.7);
 }
 .bg-red-500\/10 {
   background-color: rgb(239 68 68 / 0.1);
@@ -1347,10 +1431,6 @@ video {
   padding-left: 1rem;
   padding-right: 1rem;
 }
-.px-5 {
-  padding-left: 1.25rem;
-  padding-right: 1.25rem;
-}
 .px-7 {
   padding-left: 1.75rem;
   padding-right: 1.75rem;
@@ -1387,8 +1467,11 @@ video {
   padding-top: 2rem;
   padding-bottom: 2rem;
 }
-.pb-5 {
-  padding-bottom: 1.25rem;
+.pl-0 {
+  padding-left: 0px;
+}
+.pl-3 {
+  padding-left: 0.75rem;
 }
 .pl-9 {
   padding-left: 2.25rem;
@@ -1396,14 +1479,17 @@ video {
 .pt-0 {
   padding-top: 0px;
 }
-.pt-6 {
-  padding-top: 1.5rem;
+.pt-4 {
+  padding-top: 1rem;
 }
 .text-left {
   text-align: left;
 }
 .text-center {
   text-align: center;
+}
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 .text-2xl {
   font-size: 1.5rem;
@@ -1412,6 +1498,9 @@ video {
 .text-3xl {
   font-size: 1.875rem;
   line-height: 2.25rem;
+}
+.text-\[0\.82em\] {
+  font-size: 0.82em;
 }
 .text-\[10px\] {
   font-size: 10px;
@@ -1448,6 +1537,9 @@ video {
 .uppercase {
   text-transform: uppercase;
 }
+.italic {
+  font-style: italic;
+}
 .tabular-nums {
   --tw-numeric-spacing: tabular-nums;
   font-variant-numeric: var(--tw-ordinal) var(--tw-slashed-zero) var(--tw-numeric-figure) var(--tw-numeric-spacing) var(--tw-numeric-fraction);
@@ -1466,9 +1558,6 @@ video {
 }
 .tracking-\[0\.16em\] {
   letter-spacing: 0.16em;
-}
-.tracking-\[0\.18em\] {
-  letter-spacing: 0.18em;
 }
 .tracking-tight {
   letter-spacing: -0.025em;
@@ -1521,8 +1610,8 @@ video {
 .text-muted-foreground\/30 {
   color: hsl(var(--muted-foreground) / 0.3);
 }
-.text-muted-foreground\/50 {
-  color: hsl(var(--muted-foreground) / 0.5);
+.text-muted-foreground\/70 {
+  color: hsl(var(--muted-foreground) / 0.7);
 }
 .text-muted-foreground\/80 {
   color: hsl(var(--muted-foreground) / 0.8);
@@ -1560,6 +1649,15 @@ video {
 }
 .text-white\/80 {
   color: rgb(255 255 255 / 0.8);
+}
+.underline {
+  text-decoration-line: underline;
+}
+.decoration-primary\/40 {
+  text-decoration-color: hsl(var(--primary) / 0.4);
+}
+.underline-offset-2 {
+  text-underline-offset: 2px;
 }
 .underline-offset-4 {
   text-underline-offset: 4px;
@@ -1767,6 +1865,9 @@ video {
   .placeholder\:text-muted-foreground::placeholder {
   color: hsl(var(--muted-foreground));
 }
+  .first\:mt-0:first-child {
+  margin-top: 0px;
+}
   .hover\:scale-110:hover {
   --tw-scale-x: 1.1;
   --tw-scale-y: 1.1;
@@ -1783,6 +1884,9 @@ video {
 }
   .hover\:bg-accent\/60:hover {
   background-color: hsl(var(--accent) / 0.6);
+}
+  .hover\:bg-accent\/70:hover {
+  background-color: hsl(var(--accent) / 0.7);
 }
   .hover\:bg-destructive:hover {
   background-color: hsl(var(--destructive));
@@ -1808,6 +1912,9 @@ video {
 }
   .hover\:underline:hover {
   text-decoration-line: underline;
+}
+  .hover\:decoration-primary:hover {
+  text-decoration-color: hsl(var(--primary));
 }
   .hover\:opacity-100:hover {
   opacity: 1;
@@ -1921,6 +2028,14 @@ video {
     grid-column: span 2 / span 2;
   }
 
+  .sm\:inline {
+    display: inline;
+  }
+
+  .sm\:max-w-lg {
+    max-width: 32rem;
+  }
+
   .sm\:grid-cols-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1937,15 +2052,15 @@ video {
     justify-content: flex-end;
   }
 
+  .sm\:justify-between {
+    justify-content: space-between;
+  }
+
   .sm\:rounded-2xl {
     border-radius: 1rem;
   }
 }
   @media (min-width: 768px) {
-
-  .md\:block {
-    display: block;
-  }
 
   .md\:max-w-xs {
     max-width: 20rem;

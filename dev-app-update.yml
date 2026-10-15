@@ -1,0 +1,6 @@
+# Lets `npm run dev` exercise the real update check (electron-updater only reads
+# this file outside a packaged build). The packaged app uses the app-update.yml
+# that electron-builder generates from the "publish" config in package.json.
+provider: github
+owner: Houssem-DH
+repo: NovaPS5

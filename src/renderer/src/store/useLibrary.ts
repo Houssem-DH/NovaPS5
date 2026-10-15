@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppInfo, Game, InstallProgress, LibraryScanResult } from '@shared/types'
+import type { AppInfo, Game, InstallProgress, LibraryScanResult, UpdateState, WhatsNew } from '@shared/types'
 
 export type View = 'library' | 'settings'
 
@@ -13,6 +13,11 @@ interface LibraryState {
   installOpen: boolean
   /** False until the runtime bootstrap checklist finishes successfully. */
   bootstrapped: boolean
+  /** Latest app-update status pushed from the main process. */
+  update: UpdateState | null
+  /** Release notes of the update installed by the last restart (shown once). */
+  whatsNew: WhatsNew | null
+  updateOpen: boolean
 
   load: () => Promise<void>
   refreshInfo: () => Promise<void>
@@ -25,6 +30,13 @@ interface LibraryState {
   setBootstrapped: (bootstrapped: boolean) => void
   launch: (id: string) => Promise<{ ok: boolean; error?: string }>
   remove: (id: string) => Promise<void>
+  setUpdate: (state: UpdateState) => void
+  setUpdateOpen: (open: boolean) => void
+  checkUpdates: () => Promise<void>
+  installUpdate: () => Promise<void>
+  /** Ask for release notes of an update installed by the last restart. */
+  checkWhatsNew: () => Promise<void>
+  dismissWhatsNew: () => Promise<void>
 }
 
 export const useLibrary = create<LibraryState>((set, get) => ({
@@ -36,6 +48,9 @@ export const useLibrary = create<LibraryState>((set, get) => ({
   view: 'library',
   installOpen: false,
   bootstrapped: false,
+  update: null,
+  whatsNew: null,
+  updateOpen: false,
 
   load: async () => {
     set({ loading: true })
@@ -80,6 +95,28 @@ export const useLibrary = create<LibraryState>((set, get) => ({
       view: state.selectedId === id ? 'library' : state.view
     }))
     void get()
+  },
+
+  setUpdate: (update) => set({ update }),
+  setUpdateOpen: (updateOpen) => set({ updateOpen }),
+
+  checkUpdates: async () => {
+    const update = await window.api.checkForUpdates()
+    set({ update })
+  },
+
+  installUpdate: async () => {
+    await window.api.installUpdate()
+  },
+
+  checkWhatsNew: async () => {
+    const whatsNew = await window.api.whatsNew()
+    if (whatsNew) set({ whatsNew })
+  },
+
+  dismissWhatsNew: async () => {
+    await window.api.dismissWhatsNew()
+    set({ whatsNew: null })
   }
 }))
 

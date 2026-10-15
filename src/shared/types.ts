@@ -102,6 +102,8 @@ export interface Settings {
 
 export interface AppInfo {
   toolsDir: string
+  /** Version of this app (from package.json). */
+  appVersion: string
   relinkerPresent: boolean
   libsPresent: boolean
   pythonPath: string | null
@@ -114,6 +116,8 @@ export interface AppInfo {
   runtimeVersion: string | null
   /** "owner/repo" queried for runtime releases. */
   runtimeRepo: string
+  /** "owner/repo" of this app, used for its release notes and links. */
+  appRepo: string
 }
 
 // ---- First-run bootstrap / runtime updates --------------------------------
@@ -172,6 +176,44 @@ export interface LibraryScanResult {
   summary: LibraryScanSummary
 }
 
+// ---- Application updates ---------------------------------------------------
+
+export type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'current'
+  | 'available'
+  | 'downloading'
+  | 'ready'
+  | 'installing'
+  | 'error'
+
+export interface UpdateState {
+  status: UpdateStatus
+  /** Version currently running. */
+  currentVersion: string
+  /** Version offered by the update, when one was found. */
+  version?: string
+  /** 0..100 while downloading. */
+  percent?: number
+  /** Release notes (Markdown) for the offered/installed version. */
+  notes?: string
+  /** Short line for the header. */
+  message?: string
+  /** Longer explanation for the error state. */
+  detail?: string
+  /** True when the user asked for this check (enables "up to date" feedback). */
+  manual?: boolean
+}
+
+/** Release notes of an update that was installed, shown once after restart. */
+export interface WhatsNew {
+  version: string
+  /** Version the update was installed from, best effort. */
+  from?: string
+  notes: string
+}
+
 /** API exposed on window.api via the preload contextBridge. */
 export interface LibraryApi {
   appInfo: () => Promise<AppInfo>
@@ -196,4 +238,18 @@ export interface LibraryApi {
   getSettings: () => Promise<AppSettings>
   /** Point new installs at another folder, relocating installed games. */
   setGamesDir: (dir: string) => Promise<SetGamesDirResult>
+
+  /** Current app-update status (also pushed on update:state). */
+  updateState: () => Promise<UpdateState>
+  /** Ask GitHub whether a newer NovaPS5 release exists. */
+  checkForUpdates: () => Promise<UpdateState>
+  /** Restart into an update that has finished downloading. */
+  installUpdate: () => Promise<{ ok: boolean }>
+  onUpdateState: (cb: (state: UpdateState) => void) => () => void
+  /** Release notes of the update installed by the last restart, once. */
+  whatsNew: () => Promise<WhatsNew | null>
+  /** Mark the "what's new" notice as seen. */
+  dismissWhatsNew: () => Promise<void>
+  /** Open an http(s) link in the user's browser. */
+  openExternal: (url: string) => Promise<void>
 }

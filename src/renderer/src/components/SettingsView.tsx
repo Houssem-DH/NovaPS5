@@ -4,10 +4,12 @@ import {
   CheckCircle2,
   Database,
   FolderOpen,
+  Github,
   Loader2,
   Package,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   Terminal,
   Wrench,
   XCircle
@@ -90,7 +92,7 @@ function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'muted'; children: Rea
 }
 
 export function SettingsView() {
-  const { appInfo, refreshInfo } = useLibrary()
+  const { appInfo, refreshInfo, update, checkUpdates, setUpdateOpen } = useLibrary()
   const [checking, setChecking] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [moving, setMoving] = useState(false)
@@ -256,12 +258,65 @@ export function SettingsView() {
         />
       </Section>
 
+      <Section title="Application updates" description="NovaPS5 keeps itself current from its GitHub releases.">
+        <Row
+          icon={Sparkles}
+          label="NovaPS5"
+          value={appInfo ? `v${appInfo.appVersion}` : '…'}
+          badge={
+            update?.status === 'current' ? (
+              <Pill tone={/no updates published/i.test(update.message ?? '') ? 'muted' : 'ok'}>
+                {update.message ?? 'Up to date'}
+              </Pill>
+            ) : update?.status === 'error' ? (
+              <Pill tone="warn">Check failed</Pill>
+            ) : update?.version ? (
+              <Pill tone="warn">v{update.version} available</Pill>
+            ) : undefined
+          }
+        />
+        <Row icon={Github} label="Updates from" value={`github.com/${appInfo?.appRepo ?? 'Houssem-DH/NovaPS5'}`} />
+        <div className="px-4 py-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setUpdateOpen(true)
+              void checkUpdates()
+            }}
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Check for updates
+          </Button>
+        </div>
+      </Section>
+
       <Section title="About">
-        <div className="panel p-4 text-xs leading-relaxed text-muted-foreground">
+        <div className="panel space-y-3 p-4 text-xs leading-relaxed text-muted-foreground">
           <p>
-            Each install unwraps the game&apos;s SELF modules to ELF, runs the AnyPS5 relinker to build a Windows
-            executable, arranges the <code className="rounded bg-secondary px-1">app0/</code> runtime layout, then
-            launches the game once to verify it works. Conversion uses your local dump only — nothing is uploaded.
+            NovaPS5 is a library, converter and launcher built by{' '}
+            <span className="text-foreground">Nova Crafted</span>. It prepares each dump, drives the
+            conversion, arranges the <code className="rounded bg-secondary px-1">app0/</code> runtime layout,
+            then launches the game once to verify it works. Conversion uses your local dump only — nothing
+            is uploaded.
+          </p>
+          <p>
+            The conversion engine is{' '}
+            <a
+              href="https://github.com/boykopovar/AnyPS5"
+              onClick={(event) => {
+                event.preventDefault()
+                void window.api.openExternal('https://github.com/boykopovar/AnyPS5')
+              }}
+              className="text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
+            >
+              AnyPS5
+            </a>{' '}
+            by <span className="text-foreground">boykopovar</span>: the SELF/fSELF unwrapping, the ELF
+            relinking and the runtime libraries are its work, redistributed here under its license. Please
+            support the upstream project.
+          </p>
+          <p className="text-[11px] text-muted-foreground/80">
+            NovaPS5 v{appInfo?.appVersion ?? '…'} · GPL-2.0-or-later · includes AnyPS5 (GPL-2.0)
           </p>
         </div>
       </Section>

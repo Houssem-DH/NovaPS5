@@ -1,13 +1,27 @@
 # NovaPS5
 
-A modern Windows desktop library that installs, converts and launches PS5 game dumps using the
-[AnyPS5](https://github.com/boykopovar/AnyPS5) relinker — **by Nova Crafted**.
+A desktop library, converter and launcher for PS5 game dumps on Windows — **by Nova Crafted**.
 
-Point it at a dump folder (or a `.zip` / `.rar` / `.7z`), and NovaPS5 unwraps the SELF containers,
-relinks the executable, lays out the runtime, installs the game, then **launches it once to tell you
-whether it works**. No command line, no manual tooling.
+Point it at a dump folder (or a `.zip` / `.rar` / `.7z`), and NovaPS5 drives the conversion, installs
+the game, then **launches it once to tell you whether it works**. No command line, no manual tooling.
 
 ![NovaPS5 library](public/logo.png)
+
+> ### Credit where it is due
+>
+> **The conversion engine is [AnyPS5](https://github.com/boykopovar/AnyPS5), by
+> [@boykopovar](https://github.com/boykopovar) — it is the real work, and it is not ours.**
+>
+> AnyPS5 implements the hard part of PS5 executables on desktop: decrypting/unwrapping SELF and fSELF
+> containers to ELF, relinking the imports of the converted ELF, and shipping the runtime libraries the
+> converted executable needs. NovaPS5 is the layer around it: a desktop library, the dump validation and
+> install pipeline, the archive handling, the preflight compatibility report, the install once-and-verify
+> launch test, per-game organisation, self-updating and packaging. Everything that actually makes a PS5
+> binary run on Windows comes from AnyPS5 and is redistributed here under its GPL-2.0 license.
+>
+> NovaPS5 ships `scripts/unwrap_self.py` (taken from AnyPS5) and the AnyPS5 relinker + runtime libraries,
+> and refreshes them from AnyPS5's releases. If any of it is useful to you, please star and support the
+> upstream project.
 
 ---
 
@@ -27,6 +41,10 @@ whether it works**. No command line, no manual tooling.
 - **Runtime updates.** The conversion runtime is fetched from AnyPS5 releases and refreshed
   automatically; Settings shows *Up to date* with an on-demand **Scan for updates**.
 - **Python is bundled.** End users never install Python — the interpreter ships inside the app.
+- **Updates itself.** The header shows the update state and checks GitHub on every launch. A newer
+  release downloads in the background, installs by itself, restarts NovaPS5 and opens a **What's new**
+  dialog with the version that landed and the release notes you published. Closing the window parks the
+  app in the tray so an update never interrupts you.
 
 ## Requirements
 
@@ -64,6 +82,50 @@ the executable.
 Icon/branding assets: `public/icon.png` (app icon) and `public/logo.png` (wordmark). Regenerate the
 Windows icon after changing them with `powershell -ExecutionPolicy Bypass -File scripts/make-icon.ps1`.
 
+## Releasing an update
+
+The app updates itself from this repository's **GitHub Releases** (see `build.publish` in
+`package.json`). To ship a version:
+
+1. **Bump the version** in `package.json` (`0.1.0` → `0.2.0`) and commit it.
+2. Run `npm run dist` — this builds `release/NovaPS5-Setup-<version>.exe` and prints the exact files to
+   attach.
+3. Draft a new release on [github.com/Houssem-DH/NovaPS5/releases](https://github.com/Houssem-DH/NovaPS5/releases)
+   with the tag `v<version>` (matching `package.json` exactly) and **attach three files** from `release/`:
+
+   | File | Why it is needed |
+   | --- | --- |
+   | `NovaPS5-Setup-<version>.exe` | the installer the app runs to update |
+   | `latest.yml` | what the updater reads first (version + file name + hash) |
+   | `NovaPS5-Setup-<version>.exe.blockmap` | lets the updater download only the changed parts |
+
+4. Write the **release notes in Markdown** — headings, lists, `**bold**`, `` `code` ``, quotes and links
+   are all rendered in the in-app What's new dialog. GitHub stores the body as Markdown and the updater
+   reads it back already rendered as HTML, so both are handled; a plain-text body is treated as Markdown.
+   Notes are kept with the code under `docs/releases/` (see `docs/releases/v0.1.0.md`) so the body can be
+   pasted straight into the release.
+
+   ```markdown
+   ## Highlights
+   - Preflight now warns before a bad dump is installed
+   - Installs use a stage-then-swap layout
+
+   ### Fixes
+   1. Games that crash at startup report their exit code
+   ```
+
+5. Publish the release. Existing installs pick it up on their next launch (or from the header control
+   / **Settings ▸ Application updates**), download it in the background, then restart into the new
+   version and show what changed.
+
+Notes:
+
+- A git **tag alone is not enough** — electron-updater looks for the published release and its
+  `latest.yml`. Nothing to attach means the check reports *Release is incomplete*.
+- To exercise the real check from a source build, set `NOVAPS5_DEV_UPDATES=1` before `npm run dev`
+  (it reads `dev-app-update.yml`). Without it, source builds report that checks are for installed builds.
+- Update state lives in `updates.json` under the app's user-data folder (`%APPDATA%\NovaPS5`).
+
 ## How an install works
 
 ```
@@ -73,25 +135,58 @@ validate → copy to staging → unwrap eboot (SELF → ELF) → unwrap modules 
 
 - Everything is prepared in `.staging-<id>-<ts>` and swapped in with an `.old` rollback, so a failure
   never leaves a broken install behind.
-- `scripts/unwrap_self.py` (from AnyPS5) turns a decrypted SELF container into a clean ELF; the app
-  runs it with the bundled Python.
+- The steps in the middle are **AnyPS5's work**: `scripts/unwrap_self.py` (from AnyPS5) turns a
+  decrypted SELF container into a clean ELF using the bundled Python, then the AnyPS5 relinker resolves
+  the imports and the AnyPS5 runtime libraries are laid out so the executable starts. NovaPS5 decides
+  *what* to convert, prepares the dump so it can be converted, and reports whether the result runs.
 - Conversion is local: nothing is uploaded, and no game content is downloaded.
+
+## Credits
+
+| Project | Author | What it does here | License |
+| --- | --- | --- | --- |
+| [**AnyPS5**](https://github.com/boykopovar/AnyPS5) | [@boykopovar](https://github.com/boykopovar) | **The conversion engine.** SELF/fSELF unwrapping, ELF relinking, runtime libraries, and the update feed NovaPS5 pulls the runtime from. | GPL-2.0 |
+| [Electron](https://www.electronjs.org/) | OpenJS Foundation | Desktop shell | MIT |
+| [React](https://react.dev/), [Vite](https://vite.dev/), [Tailwind CSS](https://tailwindcss.com/), [Radix UI](https://www.radix-ui.com/), [lucide](https://lucide.dev/) | their authors | User interface | MIT / ISC |
+| [electron-updater](https://www.electron.build/auto-update) | electron-builder | In-app updates | MIT |
+| [CPython](https://www.python.org/) | Python Software Foundation | Runs AnyPS5's unwrap script inside the app | PSF-2.0 |
+
+NovaPS5's own contribution — the library UI, the import/validate/install pipeline, the compatibility
+preflight, the launch-test verdict, the updater and the packaging — is by **Nova Crafted**.
+
+## License
+
+NovaPS5 is released under the **GNU General Public License v2.0 or later** — see [`LICENSE`](LICENSE).
+
+It is not a free choice: NovaPS5 redistributes tooling from [AnyPS5](https://github.com/boykopovar/AnyPS5),
+which is licensed GPL-2.0 (its unwrap script and the relinker + runtime libraries it ships and updates
+from AnyPS5's releases). A program that includes GPL-2.0 code must itself be distributed under the GPL,
+so the same terms cover this project, and the full corresponding source is in this repository.
+
+If you fork NovaPS5 or ship a build, keep the license, keep the credits above, and point your users at
+[AnyPS5](https://github.com/boykopovar/AnyPS5) for the engine.
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
-| `src/main` | Electron main process: window, IPC, library, settings |
+| `src/main` | Electron main process: window, menu, IPC, library, updater, settings |
 | `src/main/pipeline` | Conversion pipeline (`dump`, `compat`, `install`, `verify`, `relink`, `elf`) |
 | `src/preload` | `contextBridge` API exposed to the renderer |
 | `src/renderer` | React UI (library, detail, settings, install dialog, bootstrap) |
 | `src/shared` | Types shared across processes |
-| `scripts` | Runtime/python setup, icon generation, dist wrapper |
+| `scripts` | Runtime/python setup, icon generation, dist wrapper, AnyPS5's `unwrap_self.py` |
 | `public` | Brand assets (`icon.png`, `logo.png`, `favicon.ico`) |
+| `build` | Installer/exe icon + the icon generator script |
+| `docs/releases` | Release notes kept with the code, ready to paste into a GitHub release |
 
 ## Notes
 
 - Use dumps of games you own. NovaPS5 is a local converter — it ships no game content and has no
   downloader.
+- Closing the window keeps NovaPS5 running in the tray (click the tray icon to bring it back); quit
+  from the tray menu or with `Ctrl+Q`.
+- Text is selectable everywhere it is useful (paths, verdicts, release notes) — `Ctrl+C`, right-click →
+  Copy, or `Ctrl+A`.
 - The conversion runtime (relinker + libraries) comes from the
   [AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases) and can be updated from Settings.

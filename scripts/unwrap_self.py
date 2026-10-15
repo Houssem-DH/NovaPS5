@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Provenance (NovaPS5): this script is part of AnyPS5 <https://github.com/boykopovar/AnyPS5>,
+# licensed GPL-2.0, and is redistributed here unmodified so NovaPS5 can drive it with its
+# bundled Python. All credit for the SELF/fSELF unwrapping belongs to AnyPS5.
 """unwrap_self -- turn a decrypted SELF or fSELF container into a clean ELF.
 
 The relinker reads a plain ELF executable and skips SELF containers with a warning,

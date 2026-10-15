@@ -6,7 +6,11 @@ const crypto = require("crypto");
 const child_process = require("child_process");
 const util = require("util");
 const os = require("os");
+const electronUpdater = require("electron-updater");
+const fs$1 = require("node:fs");
+const path$1 = require("node:path");
 const DEFAULT_RUNTIME_REPO = "boykopovar/AnyPS5";
+const APP_REPO = "Houssem-DH/NovaPS5";
 let toolsOverride = null;
 function setToolsOverride(dir) {
   toolsOverride = dir;
@@ -1963,10 +1967,237 @@ async function setGamesDir(dir) {
     };
   }
 }
+let quitting = false;
+function beginQuit() {
+  quitting = true;
+}
+function isQuitting() {
+  return quitting;
+}
+function cancelQuit() {
+  quitting = false;
+}
+const RESTART_DELAY_MS = 4e3;
+const DEV_UPDATES = process.env.NOVAPS5_DEV_UPDATES === "1";
+const CAN_CHECK = () => electron.app.isPackaged || DEV_UPDATES;
+let getWindow = null;
+let state = { status: "idle", currentVersion: electron.app.getVersion() };
+let checking = null;
+let restartTimer = null;
+function storePath() {
+  return path$1.join(electron.app.getPath("userData"), "updates.json");
+}
+function readStore() {
+  try {
+    const raw = fs$1.readFileSync(storePath(), "utf8").replace(/^\uFEFF/, "");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function writeStore(store) {
+  try {
+    const file = storePath();
+    fs$1.mkdirSync(path$1.dirname(file), { recursive: true });
+    const tmp = `${file}.tmp`;
+    fs$1.writeFileSync(tmp, JSON.stringify(store, null, 2));
+    fs$1.renameSync(tmp, file);
+  } catch {
+  }
+}
+function publish(patch) {
+  state = { ...state, currentVersion: electron.app.getVersion(), ...patch };
+  getWindow?.()?.webContents.send("update:state", state);
+  return state;
+}
+function updateState() {
+  return state;
+}
+function notesOf(info) {
+  const notes = info.releaseNotes;
+  if (!notes) return "";
+  if (typeof notes === "string") return notes;
+  return notes.map((entry) => entry.version ? `## ${entry.version}
+
+${entry.note ?? ""}` : entry.note ?? "").join("\n\n").trim();
+}
+function explain(error) {
+  const raw = error instanceof Error ? error.message : String(error);
+  const code = error?.code ?? "";
+  if (code === "ERR_UPDATER_LATEST_VERSION_NOT_FOUND" || code === "ERR_UPDATER_NO_PUBLISHED_VERSIONS" || /no published versions|unable to find latest version|production release exists/i.test(raw)) {
+    return {
+      status: "current",
+      message: "No updates published yet",
+      detail: "There is no published NovaPS5 release to compare this version with yet."
+    };
+  }
+  if (/ENOTFOUND|EAI_AGAIN|ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ENETUNREACH|ERR_PROXY/i.test(raw)) {
+    return {
+      status: "error",
+      message: "No internet connection",
+      detail: "NovaPS5 could not reach GitHub to look for updates."
+    };
+  }
+  if (/ETIMEDOUT|timeout|ERR_CONNECTION/i.test(raw)) {
+    return { status: "error", message: "Update check timed out", detail: "The update server did not answer in time." };
+  }
+  if (code === "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND" || code === "ERR_UPDATER_INVALID_UPDATE_INFO" || code === "ERR_UPDATER_INVALID_RELEASE_FEED") {
+    return {
+      status: "error",
+      message: "Release is incomplete",
+      detail: "The GitHub release is missing its latest.yml update file, so NovaPS5 cannot verify the download. Attach NovaPS5-Setup-<version>.exe, latest.yml and its .blockmap to the release."
+    };
+  }
+  if (code === "ERR_UPDATER_INVALID_SIGNATURE") {
+    return {
+      status: "error",
+      message: "Update could not be verified",
+      detail: "The downloaded installer does not match what the release published."
+    };
+  }
+  if (/not packed|dev update config|dev-app-update/i.test(raw)) {
+    return { status: "current", message: "Update checks are for installed builds" };
+  }
+  return {
+    status: "error",
+    message: "Could not check for updates",
+    detail: raw.length > 300 ? `${raw.slice(0, 300)}…` : raw
+  };
+}
+function scheduleRestart(version) {
+  if (restartTimer) return;
+  publish({ status: "installing", message: `Restarting to install v${version}…`, percent: 100 });
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    installNow();
+  }, RESTART_DELAY_MS);
+}
+function installNow() {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+  try {
+    beginQuit();
+    electronUpdater.autoUpdater.quitAndInstall(true, true);
+    setTimeout(cancelQuit, 2e4);
+  } catch (error) {
+    cancelQuit();
+    publish({ status: "error", message: "Could not start the installer", detail: String(error) });
+  }
+}
+function initUpdater(window) {
+  getWindow = window;
+  state = { status: "idle", currentVersion: electron.app.getVersion() };
+  electronUpdater.autoUpdater.autoDownload = true;
+  electronUpdater.autoUpdater.autoInstallOnAppQuit = true;
+  electronUpdater.autoUpdater.allowPrerelease = false;
+  if (DEV_UPDATES) electronUpdater.autoUpdater.forceDevUpdateConfig = true;
+  electronUpdater.autoUpdater.verifyUpdateCodeSignature = false;
+  electronUpdater.autoUpdater.on("checking-for-update", () => publish({ status: "checking", message: "Checking for updates…" }));
+  electronUpdater.autoUpdater.on("update-available", (info) => {
+    publish({
+      status: "available",
+      version: info.version,
+      notes: notesOf(info),
+      percent: 0,
+      message: `NovaPS5 v${info.version} is available`
+    });
+  });
+  electronUpdater.autoUpdater.on("update-not-available", () => {
+    const store = readStore();
+    store.lastCheckAt = Date.now();
+    writeStore(store);
+    publish({
+      status: "current",
+      message: state.manual ? "You're on the latest version" : "Up to date",
+      percent: void 0
+    });
+  });
+  electronUpdater.autoUpdater.on("download-progress", (progress) => {
+    publish({
+      status: "downloading",
+      percent: Math.max(0, Math.min(100, Math.round(progress.percent))),
+      message: `Downloading update… ${Math.round(progress.percent)}%`
+    });
+  });
+  electronUpdater.autoUpdater.on("update-downloaded", (info) => {
+    const store = readStore();
+    store.notice = {
+      version: info.version,
+      from: electron.app.getVersion(),
+      notes: notesOf(info),
+      at: Date.now()
+    };
+    store.lastCheckAt = Date.now();
+    writeStore(store);
+    publish({
+      status: "ready",
+      version: info.version,
+      notes: notesOf(info),
+      percent: 100,
+      message: `NovaPS5 v${info.version} downloaded`
+    });
+    scheduleRestart(info.version);
+  });
+  electronUpdater.autoUpdater.on("error", (error) => {
+    const result = explain(error);
+    publish({ status: result.status, message: result.message, detail: result.detail });
+  });
+  if (CAN_CHECK()) {
+    setTimeout(() => void checkForUpdates(false), 4e3);
+  }
+}
+async function checkForUpdates(manual) {
+  if (!CAN_CHECK()) {
+    return publish({
+      status: "current",
+      message: "Update checks are for installed builds",
+      detail: "Install NovaPS5 with its installer to receive updates automatically.",
+      manual,
+      percent: void 0
+    });
+  }
+  if (checking) return checking;
+  publish({ status: "checking", message: "Checking for updates…", manual });
+  checking = (async () => {
+    try {
+      const result = await electronUpdater.autoUpdater.checkForUpdates();
+      if (!result && state.status === "checking") {
+        publish({ status: "current", message: "Up to date" });
+      }
+    } catch (error) {
+      const result = explain(error);
+      publish({ status: result.status, message: result.message, detail: result.detail });
+    } finally {
+      checking = null;
+    }
+    if (state.status === "checking") publish({ status: "current", message: "Up to date" });
+    return state;
+  })();
+  return checking;
+}
+function pendingWhatsNew() {
+  const store = readStore();
+  const notice = store.notice;
+  if (!notice) return null;
+  if (notice.version !== electron.app.getVersion()) {
+    delete store.notice;
+    writeStore(store);
+    return null;
+  }
+  return { version: notice.version, from: notice.from, notes: notice.notes };
+}
+function dismissWhatsNew() {
+  const store = readStore();
+  delete store.notice;
+  writeStore(store);
+}
 async function appInfo() {
   const { relinker, libs } = toolingPresent();
   return {
     toolsDir: toolsDir(),
+    appVersion: electron.app.getVersion(),
     relinkerPresent: relinker,
     libsPresent: libs,
     pythonPath: await findPython(),
@@ -1974,19 +2205,20 @@ async function appInfo() {
     libraryRoot: libraryRoot(),
     gamesDir: gamesRoot(),
     runtimeVersion: readRuntimeManifest()?.version ?? null,
-    runtimeRepo: runtimeRepo()
+    runtimeRepo: runtimeRepo(),
+    appRepo: APP_REPO
   };
 }
-function registerIpc(getWindow) {
+function registerIpc(getWindow2) {
   electron.ipcMain.handle("app:info", () => appInfo());
   electron.ipcMain.handle("dialog:selectFolder", async () => {
-    const win = getWindow();
+    const win = getWindow2();
     const options = { properties: ["openDirectory", "createDirectory"] };
     const result = win ? await electron.dialog.showOpenDialog(win, options) : await electron.dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];
   });
   electron.ipcMain.handle("dialog:selectZip", async () => {
-    const win = getWindow();
+    const win = getWindow2();
     const options = {
       properties: ["openFile"],
       filters: [{ name: "PS5 dump archive", extensions: ["zip", "rar", "7z"] }]
@@ -2005,13 +2237,13 @@ function registerIpc(getWindow) {
   electron.ipcMain.handle("install:start", (_e, req) => {
     const jobId = crypto.randomUUID();
     installGame(req.sourcePath, req.name, (progress) => {
-      getWindow()?.webContents.send("install:progress", progress);
+      getWindow2()?.webContents.send("install:progress", progress);
     }, jobId).catch(() => {
     });
     return { jobId };
   });
   electron.ipcMain.handle("bootstrap:run", () => {
-    const win = getWindow();
+    const win = getWindow2();
     return ensureRuntime((step) => win?.webContents.send("bootstrap:step", step));
   });
   electron.ipcMain.handle("settings:get", () => ({
@@ -2019,13 +2251,27 @@ function registerIpc(getWindow) {
     runtimeRepo: runtimeRepo()
   }));
   electron.ipcMain.handle("settings:setGamesDir", (_e, dir) => setGamesDir(dir));
+  electron.ipcMain.handle("update:state", () => updateState());
+  electron.ipcMain.handle("update:check", () => checkForUpdates(true));
+  electron.ipcMain.handle("update:install", () => {
+    installNow();
+    return { ok: true };
+  });
+  electron.ipcMain.handle("update:whatsNew", () => pendingWhatsNew());
+  electron.ipcMain.handle("update:dismissWhatsNew", () => {
+    dismissWhatsNew();
+    return { ok: true };
+  });
+  electron.ipcMain.handle("app:openExternal", async (_e, url) => {
+    if (/^https?:\/\//i.test(url)) await electron.shell.openExternal(url);
+  });
 }
 electron.protocol.registerSchemesAsPrivileged([
   { scheme: "media", privileges: { standard: true, secure: true, supportFetchAPI: true } }
 ]);
 let mainWindow = null;
 let tray = null;
-let isQuitting = false;
+let trayHintShown = false;
 function iconPath() {
   return electron.app.isPackaged ? path.join(process.resourcesPath, "icon.png") : path.join(electron.app.getAppPath(), "public", "icon.png");
 }
@@ -2038,6 +2284,18 @@ function showWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   if (!mainWindow.isVisible()) mainWindow.show();
   mainWindow.focus();
+}
+function hideToTray() {
+  mainWindow?.hide();
+  if (trayHintShown || !tray) return;
+  trayHintShown = true;
+  try {
+    tray.displayBalloon({
+      title: "NovaPS5 is still running",
+      content: "Click the tray icon to bring the window back — Quit in its menu closes the app."
+    });
+  } catch {
+  }
 }
 function askInstall() {
   showWindow();
@@ -2067,10 +2325,11 @@ function createWindow() {
   });
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.on("close", (event) => {
-    if (isQuitting) return;
+    if (isQuitting()) return;
     event.preventDefault();
-    mainWindow?.minimize();
+    hideToTray();
   });
+  attachContextMenu(mainWindow);
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -2078,6 +2337,24 @@ function createWindow() {
   }
   mainWindow.on("closed", () => {
     mainWindow = null;
+  });
+}
+function attachContextMenu(window) {
+  window.webContents.on("context-menu", (_event, params) => {
+    const hasSelection = params.selectionText.trim().length > 0;
+    const items = [];
+    if (params.isEditable) {
+      items.push(
+        { role: "cut", label: "Cut", enabled: hasSelection },
+        { role: "copy", label: "Copy", enabled: hasSelection },
+        { role: "paste", label: "Paste" },
+        { type: "separator" },
+        { role: "selectAll", label: "Select all" }
+      );
+    } else if (hasSelection) {
+      items.push({ role: "copy", label: "Copy" }, { type: "separator" }, { role: "selectAll", label: "Select all" });
+    }
+    if (items.length) electron.Menu.buildFromTemplate(items).popup({ window });
   });
 }
 function createTray() {
@@ -2090,17 +2367,19 @@ function createTray() {
       electron.Menu.buildFromTemplate([
         { label: "Open NovaPS5", click: showWindow },
         { label: "Install a game…", click: askInstall },
+        { label: "Check for updates…", click: () => void checkForUpdates(true) },
         { type: "separator" },
         {
           label: "Quit NovaPS5",
           click: () => {
-            isQuitting = true;
+            beginQuit();
             electron.app.quit();
           }
         }
       ])
     );
     tray.on("double-click", showWindow);
+    tray.on("click", showWindow);
   } catch {
     tray = null;
   }
@@ -2112,15 +2391,28 @@ function buildMenu() {
         label: "File",
         submenu: [
           { label: "Install a game…", accelerator: "CmdOrCtrl+O", click: askInstall },
+          { label: "Check for updates…", click: () => void checkForUpdates(true) },
           { type: "separator" },
           {
             label: "Quit NovaPS5",
             accelerator: "CmdOrCtrl+Q",
             click: () => {
-              isQuitting = true;
+              beginQuit();
               electron.app.quit();
             }
           }
+        ]
+      },
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "selectAll" }
         ]
       },
       {
@@ -2174,6 +2466,7 @@ if (!gotLock) {
     buildMenu();
     createWindow();
     createTray();
+    initUpdater(() => mainWindow);
     electron.app.on("activate", () => {
       if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();
       else showWindow();
@@ -2181,7 +2474,7 @@ if (!gotLock) {
   });
 }
 electron.app.on("before-quit", () => {
-  isQuitting = true;
+  beginQuit();
 });
 electron.app.on("window-all-closed", () => {
   if (process.platform !== "darwin") electron.app.quit();

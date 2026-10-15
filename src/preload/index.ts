@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { BootstrapStep, Game, ImportRequest, InstallProgress, LibraryApi } from '@shared/types'
+import type {
+  BootstrapStep,
+  Game,
+  ImportRequest,
+  InstallProgress,
+  LibraryApi,
+  UpdateState
+} from '@shared/types'
 
 const api: LibraryApi = {
   appInfo: () => ipcRenderer.invoke('app:info'),
@@ -30,7 +37,19 @@ const api: LibraryApi = {
     const listener = (): void => cb()
     ipcRenderer.on('ui:install', listener)
     return () => ipcRenderer.removeListener('ui:install', listener)
-  }
+  },
+
+  updateState: () => ipcRenderer.invoke('update:state'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  onUpdateState: (cb: (state: UpdateState) => void) => {
+    const listener = (_event: unknown, state: UpdateState): void => cb(state)
+    ipcRenderer.on('update:state', listener)
+    return () => ipcRenderer.removeListener('update:state', listener)
+  },
+  whatsNew: () => ipcRenderer.invoke('update:whatsNew'),
+  dismissWhatsNew: () => ipcRenderer.invoke('update:dismissWhatsNew'),
+  openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url)
 }
 
 contextBridge.exposeInMainWorld('api', api)
