@@ -1,11 +1,12 @@
 {
   "name": "novaps5",
   "productName": "NovaPS5",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "runtimeVersion": "1.0.0",
   "description": "A modern PS5 games library by Nova Crafted that converts and plays dumps via the AnyPS5 relinker.",
   "main": "out/main/index.js",
   "author": "Nova Crafted",
+  "copyright": "Copyright © 2026 Nova Crafted",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",

@@ -10459,18 +10459,21 @@ function Sidebar() {
   const toolsReady = !!appInfo && appInfo.relinkerPresent && appInfo.libsPresent && !!appInfo.pythonPath;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "relative flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-sm", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "px-5 pb-5 pt-6", children: [
-      logoOk ? /* @__PURE__ */ jsxRuntimeExports.jsx(
-        "img",
-        {
-          src: "logo.png",
-          alt: "NovaPS5",
-          draggable: false,
-          onError: () => setLogoOk(false),
-          className: "brand-glow h-auto w-full max-w-[170px] select-none"
-        }
-      ) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-xl font-semibold tracking-tight", children: [
-        "Nova",
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2.5", children: [
+        logoOk && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "img",
+          {
+            src: "icon.png",
+            alt: "",
+            draggable: false,
+            onError: () => setLogoOk(false),
+            className: "brand-glow h-9 w-9 shrink-0 select-none rounded-xl"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "truncate text-xl font-semibold tracking-tight", children: [
+          "Nova",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
+        ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "h-1 w-1 rounded-full bg-primary" }),

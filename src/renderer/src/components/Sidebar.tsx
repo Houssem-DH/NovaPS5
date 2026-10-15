@@ -45,21 +45,22 @@ export function Sidebar() {
 
   return (
     <aside className="relative flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-sm">
-      {/* Brand */}
+      {/* Brand — square app icon, matching what Windows shows for the exe */}
       <div className="px-5 pb-5 pt-6">
-        {logoOk ? (
-          <img
-            src="logo.png"
-            alt="NovaPS5"
-            draggable={false}
-            onError={() => setLogoOk(false)}
-            className="brand-glow h-auto w-full max-w-[170px] select-none"
-          />
-        ) : (
-          <div className="text-xl font-semibold tracking-tight">
+        <div className="flex items-center gap-2.5">
+          {logoOk && (
+            <img
+              src="icon.png"
+              alt=""
+              draggable={false}
+              onError={() => setLogoOk(false)}
+              className="brand-glow h-9 w-9 shrink-0 select-none rounded-xl"
+            />
+          )}
+          <div className="truncate text-xl font-semibold tracking-tight">
             Nova<span className="text-primary">PS5</span>
           </div>
-        )}
+        </div>
         <div className="mt-3 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80">
           <span className="h-1 w-1 rounded-full bg-primary" />
           Powered by Nova Crafted

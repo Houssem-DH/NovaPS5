@@ -55,10 +55,11 @@ npm run dist:dir     # unpacked app       -> release/win-unpacked/NovaPS5.exe
 app is self-contained, then packages `resources/tools` (relinker + libs) and the Python runtime next to
 the executable.
 
-> **One-time Windows setting:** electron-builder unpacks its signing toolchain with symbolic links, which
-> Windows only allows with **Developer Mode** enabled (*Settings ▸ System ▸ For developers*) or from an
-> **Administrator** terminal. `npm run dist` checks this up front and tells you what to do. This affects
-> building the installer only — the resulting app needs no admin rights to install or run.
+> **Windows toolchain note:** electron-builder unpacks its `winCodeSign` tool cache with symbolic links,
+> which Windows only permits in Developer Mode or from an elevated shell. `npm run dist` prepares that
+> cache itself — the macOS-only payload that uses symlinks is excluded, since Windows never needs it —
+> so the build runs from a normal terminal and still stamps the NovaPS5 icon, product name and version
+> onto the exe and installer.
 
 Icon/branding assets: `public/icon.png` (app icon) and `public/logo.png` (wordmark). Regenerate the
 Windows icon after changing them with `powershell -ExecutionPolicy Bypass -File scripts/make-icon.ps1`.
