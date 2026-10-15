@@ -38,9 +38,11 @@ export function UpdateDialog(): JSX.Element {
         ? "You're up to date"
         : status === 'error'
           ? 'Could not check for updates'
-          : version
-            ? `NovaPS5 v${version} is available`
-            : 'Application updates'
+          : status === 'ready'
+            ? `NovaPS5 v${version} is ready to install`
+            : version
+              ? `NovaPS5 v${version} is available`
+              : 'Application updates'
 
   const blurb = whatsNew
     ? 'The app restarted into the new version. Here is what changed.'
@@ -51,10 +53,12 @@ export function UpdateDialog(): JSX.Element {
         : status === 'error'
           ? (update?.detail ?? 'The update server could not be reached.')
           : status === 'downloading'
-            ? `Downloading the update — ${percent}%. NovaPS5 restarts itself when it is ready.`
-            : status === 'ready' || status === 'installing'
-              ? 'The update is downloaded. NovaPS5 restarts to install it.'
-              : 'Updates come from this app’s GitHub releases.'
+            ? `Downloading the update — ${percent}%. Nothing restarts on its own; you decide when to install it.`
+            : status === 'ready'
+              ? 'The update is downloaded and waiting. Restart to update when it suits you — NovaPS5 will not restart on its own.'
+              : status === 'installing'
+                ? 'Restarting to install the update. NovaPS5 will be back in a moment.'
+                : 'Updates come from this app’s GitHub releases.'
 
   const Icon = whatsNew
     ? CheckCircle2
@@ -127,7 +131,7 @@ export function UpdateDialog(): JSX.Element {
               </Button>
             ) : status === 'ready' || status === 'installing' ? (
               <Button size="sm" onClick={() => void installUpdate()}>
-                Restart now
+                <Download className="h-3.5 w-3.5" /> Restart to update
               </Button>
             ) : status === 'downloading' ? (
               <Button size="sm" disabled>

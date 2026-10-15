@@ -1977,13 +1977,11 @@ function isQuitting() {
 function cancelQuit() {
   quitting = false;
 }
-const RESTART_DELAY_MS = 4e3;
 const DEV_UPDATES = process.env.NOVAPS5_DEV_UPDATES === "1";
 const CAN_CHECK = () => electron.app.isPackaged || DEV_UPDATES;
 let getWindow = null;
 let state = { status: "idle", currentVersion: electron.app.getVersion() };
 let checking = null;
-let restartTimer = null;
 function storePath() {
   return path$1.join(electron.app.getPath("userData"), "updates.json");
 }
@@ -2064,19 +2062,8 @@ function explain(error) {
     detail: raw.length > 300 ? `${raw.slice(0, 300)}…` : raw
   };
 }
-function scheduleRestart(version) {
-  if (restartTimer) return;
-  publish({ status: "installing", message: `Restarting to install v${version}…`, percent: 100 });
-  restartTimer = setTimeout(() => {
-    restartTimer = null;
-    installNow();
-  }, RESTART_DELAY_MS);
-}
 function installNow() {
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
+  publish({ status: "installing", message: "Restarting to update…", percent: 100 });
   try {
     beginQuit();
     electronUpdater.autoUpdater.quitAndInstall(true, true);
@@ -2090,7 +2077,7 @@ function initUpdater(window) {
   getWindow = window;
   state = { status: "idle", currentVersion: electron.app.getVersion() };
   electronUpdater.autoUpdater.autoDownload = true;
-  electronUpdater.autoUpdater.autoInstallOnAppQuit = true;
+  electronUpdater.autoUpdater.autoInstallOnAppQuit = false;
   electronUpdater.autoUpdater.allowPrerelease = false;
   if (DEV_UPDATES) electronUpdater.autoUpdater.forceDevUpdateConfig = true;
   electronUpdater.autoUpdater.verifyUpdateCodeSignature = false;
@@ -2136,9 +2123,8 @@ function initUpdater(window) {
       version: info.version,
       notes: notesOf(info),
       percent: 100,
-      message: `NovaPS5 v${info.version} downloaded`
+      message: `NovaPS5 v${info.version} is ready to install`
     });
-    scheduleRestart(info.version);
   });
   electronUpdater.autoUpdater.on("error", (error) => {
     const result = explain(error);

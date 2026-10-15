@@ -1,5 +1,12 @@
-// App self-update: checks the GitHub releases of this repository, downloads the
-// signed-off NSIS installer in the background, installs it and restarts NovaPS5.
+// App self-update: checks the GitHub releases of this repository and downloads
+// the signed-off NSIS installer in the background.
+//
+// Nothing installs on its own. A downloaded update waits in the "ready" state
+// until the user asks for it — the header control, the dialog's "Restart to
+// update" button or the Settings row — because restarting someone's session out
+// from under them is not ours to decide. autoInstallOnAppQuit is off for the
+// same reason: even a normal quit leaves the downloaded update for the next
+// explicit click.
 //
 // The release notes of the update that was just installed are written to disk
 // before restarting, so the relaunched app can open a "What's new" dialog with
@@ -25,9 +32,6 @@ interface UpdateStore {
   lastCheckAt?: number
 }
 
-/** How long the "restarting to update" state is shown before we install. */
-const RESTART_DELAY_MS = 4000
-
 /**
  * `npm run dev` builds are not installed, so electron-updater refuses to check
  * by default. Set NOVAPS5_DEV_UPDATES=1 to exercise the real check (reads
@@ -40,7 +44,6 @@ const CAN_CHECK = (): boolean => app.isPackaged || DEV_UPDATES
 let getWindow: (() => BrowserWindow | null) | null = null
 let state: UpdateState = { status: 'idle', currentVersion: app.getVersion() }
 let checking: Promise<UpdateState> | null = null
-let restartTimer: NodeJS.Timeout | null = null
 
 function storePath(): string {
   return path.join(app.getPath('userData'), 'updates.json')
@@ -146,21 +149,12 @@ function explain(error: unknown): { status: 'current' | 'error'; message: string
   }
 }
 
-function scheduleRestart(version: string): void {
-  if (restartTimer) return
-  publish({ status: 'installing', message: `Restarting to install v${version}…`, percent: 100 })
-  restartTimer = setTimeout(() => {
-    restartTimer = null
-    installNow()
-  }, RESTART_DELAY_MS)
-}
-
-/** Quits into the downloaded installer; the app comes back on the new version. */
+/**
+ * Quits into the downloaded installer; the app comes back on the new version.
+ * Only ever reached from an explicit user action, never on its own.
+ */
 export function installNow(): void {
-  if (restartTimer) {
-    clearTimeout(restartTimer)
-    restartTimer = null
-  }
+  publish({ status: 'installing', message: 'Restarting to update…', percent: 100 })
   try {
     beginQuit() // our window intercepts close to minimize — not during an update
     // (isSilent, isForceRunAfter): install quietly and relaunch when done.
@@ -178,7 +172,9 @@ export function initUpdater(window: () => BrowserWindow | null): void {
   state = { status: 'idle', currentVersion: app.getVersion() }
 
   autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
+  // A downloaded update must never install behind the user's back — not even
+  // when they quit the app normally. It waits for an explicit "Restart to update".
+  autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.allowPrerelease = false
   if (DEV_UPDATES) autoUpdater.forceDevUpdateConfig = true
   // Builds are not code-signed, so there is no publisher name to verify against;
@@ -232,9 +228,10 @@ export function initUpdater(window: () => BrowserWindow | null): void {
       version: info.version,
       notes: notesOf(info),
       percent: 100,
-      message: `NovaPS5 v${info.version} downloaded`
+      message: `NovaPS5 v${info.version} is ready to install`
     })
-    scheduleRestart(info.version)
+    // Deliberately nothing else happens here: the update sits at "ready" until
+    // the user clicks Restart to update.
   })
 
   autoUpdater.on('error', (error) => {

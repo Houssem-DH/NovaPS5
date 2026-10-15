@@ -23,7 +23,7 @@ export function UpdateButton(): JSX.Element {
       case 'downloading':
         return { icon: Download, label: `Downloading ${percent}%`, tone: 'text-primary' }
       case 'ready':
-        return { icon: Download, label: `v${version} ready`, tone: 'text-primary' }
+        return { icon: Download, label: `Restart to update v${version}`, tone: 'text-primary' }
       case 'installing':
         return { icon: Loader2, label: 'Restarting to update…', tone: 'text-primary' }
       case 'error':
