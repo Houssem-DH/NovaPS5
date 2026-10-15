@@ -72,3 +72,18 @@ export async function touchPlay(id: string): Promise<void> {
     await persist()
   }
 }
+
+/** Rewrite paths of games that were relocated on disk (custom games folder). */
+export async function relocateGames(
+  updates: Array<Pick<Game, 'id' | 'installPath' | 'exePath'>>
+): Promise<void> {
+  const data = await load()
+  for (const update of updates) {
+    const game = data.games.find((g) => g.id === update.id)
+    if (game) {
+      game.installPath = update.installPath
+      game.exePath = update.exePath
+    }
+  }
+  await persist()
+}

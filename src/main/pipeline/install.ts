@@ -8,7 +8,7 @@ import { relink } from './relink'
 import { copyDir, dirSize } from './copy'
 import { buildLayout } from './layout'
 import { resolveSource, readMeta } from './dump'
-import { addGame, getGame, removeGame, slugify } from '../library'
+import { addGame, getGame, slugify } from '../library'
 import type { Game, InstallProgress, InstallStep } from '@shared/types'
 
 // Skip leftover unwrap backups — the original SELF is not needed at runtime
@@ -16,6 +16,10 @@ import type { Game, InstallProgress, InstallStep } from '@shared/types'
 function isBackup(name: string): boolean {
   return name.endsWith('.esbak')
 }
+
+// Staging folders still being written by a running install — guards the
+// orphan sweep below from deleting a concurrent run's folder.
+const activeStages = new Set<string>()
 
 /**
  * The full hands-off conversion pipeline:
@@ -31,9 +35,11 @@ export async function installGame(
   let step: InstallStep = 'validating'
   let percent = 0
   let tempDir: string | null = null
-  // Tracked outside the try/catch so a failed run can clean up its own
-  // partial folder instead of leaving orphan directories behind.
-  let createdId: string | null = null
+  // The pipeline builds into a staging folder and swaps it into place only
+  // after every step has succeeded — a failed re-install therefore never
+  // destroys the previously working copy. Tracked outside the try/catch so
+  // a failed run cleans up its own partial folder.
+  let stageDir: string | null = null
 
   const emit = (message: string, pct: number, s: InstallStep): void => {
     step = s
@@ -70,8 +76,17 @@ export async function installGame(
         !!(await getGame(candidate)) || fs.existsSync(path.join(gamesRoot(), candidate))
       while (await taken(id)) id = `${baseId}-${n++}`
     }
-    const installDir = path.join(gamesRoot(), id)
-    createdId = id
+    const finalDir = path.join(gamesRoot(), id)
+    const stageName = `.staging-${id}-${Date.now()}`
+    const installDir = path.join(gamesRoot(), stageName)
+    stageDir = installDir
+    activeStages.add(stageName)
+    // Sweep staging folders orphaned by a crashed run so they never pile up.
+    for (const entry of await fsp.readdir(gamesRoot()).catch(() => [] as string[])) {
+      if (entry.startsWith('.staging-') && !activeStages.has(entry)) {
+        await fsp.rm(path.join(gamesRoot(), entry), { recursive: true, force: true }).catch(() => {})
+      }
+    }
     await fsp.rm(installDir, { recursive: true, force: true })
     ensureDir(installDir)
 
@@ -111,12 +126,19 @@ export async function installGame(
     // ---- Unwrap the eboot (SELF -> ELF) ----
     const ebootDest = path.join(installDir, 'eboot.bin')
     const inputElf = path.join(installDir, 'input.elf')
-    if (detectContainer(ebootDest) === 'self') {
+    const ebootKind = detectContainer(ebootDest)
+    if (ebootKind === 'self') {
       emit('Unwrapping eboot (SELF → ELF)…', 55, 'unwrapping-eboot')
       await unwrapSelf(ebootDest, inputElf)
-    } else {
+    } else if (ebootKind === 'elf') {
       // already a plain ELF — the relinker can read it directly
       await fsp.copyFile(ebootDest, inputElf)
+    } else {
+      // Never hand an unrecognized file to the relinker — it fails with a
+      // cryptic conversion error instead of naming the real problem.
+      throw new Error(
+        'eboot.bin is neither a plain ELF nor a SELF container — the dump file is corrupted or incomplete.'
+      )
     }
 
     // ---- Prepare bundled modules (unwrap SELF, drop .esbak backups) ----
@@ -160,9 +182,16 @@ export async function installGame(
       for (const file of await fsp.readdir(dir)) {
         if (!file.endsWith('.prx')) continue
         const filePath = path.join(dir, file)
-        if (detectContainer(filePath) === 'self') {
+        const kind = detectContainer(filePath)
+        if (kind === 'self') {
           emit(`Unwrapping ${file}…`, 60, 'preparing-modules')
           await unwrapSelf(filePath, filePath)
+        } else if (kind !== 'elf') {
+          // Same rule as the eboot: a module the relinker can't read must
+          // fail here with a clear message, not as a cryptic conversion error.
+          throw new Error(
+            `${path.join(rel, file)} is neither a plain ELF nor a SELF container — the dump's module is corrupted or incomplete.`
+          )
         }
       }
     }
@@ -214,14 +243,32 @@ export async function installGame(
       tempDir = null
     }
 
-    const sizeBytes = await dirSize(installDir)
+    // ---- Swap the staged build into place ----
+    const retire = `${finalDir}.old`
+    await fsp.rm(retire, { recursive: true, force: true }).catch(() => {})
+    if (fs.existsSync(finalDir)) {
+      // Park the previous install first: if the swap fails it is restored,
+      // so a re-install is never left half-replaced.
+      await fsp.rename(finalDir, retire)
+    }
+    try {
+      await fsp.rename(installDir, finalDir)
+    } catch (swapError) {
+      if (fs.existsSync(retire)) await fsp.rename(retire, finalDir).catch(() => {})
+      throw swapError
+    }
+    await fsp.rm(retire, { recursive: true, force: true }).catch(() => {})
+    activeStages.delete(stageName)
+    stageDir = null
+
+    const sizeBytes = await dirSize(finalDir)
     const game: Game = {
       id,
       name,
       titleId: meta.titleId,
       sourcePath: dumpRoot,
-      installPath: installDir,
-      exePath,
+      installPath: finalDir,
+      exePath: path.join(finalDir, path.basename(exePath)),
       sizeBytes,
       cover,
       status: 'ready',
@@ -233,11 +280,12 @@ export async function installGame(
     return game
   } catch (error) {
     if (tempDir) await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {})
-    // Remove the partial install and any stale library entry so a retry starts
-    // from a clean slate (no orphan folders piling up as -2, -3, ...).
-    if (createdId) {
-      await removeGame(createdId).catch(() => {})
-      await fsp.rm(path.join(gamesRoot(), createdId), { recursive: true, force: true }).catch(() => {})
+    // Drop only the staged partial build. A previously working install (and
+    // its library entry) stays untouched, so a failed re-install is retryable
+    // without losing the game that already worked.
+    if (stageDir) {
+      activeStages.delete(path.basename(stageDir))
+      await fsp.rm(stageDir, { recursive: true, force: true }).catch(() => {})
     }
     const message = error instanceof Error ? error.message : String(error)
     report({ jobId, step, message: 'Failed', percent, status: 'error', error: message })

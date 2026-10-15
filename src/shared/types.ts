@@ -81,6 +81,56 @@ export interface AppInfo {
   libsPresent: boolean
   pythonPath: string | null
   libraryRoot: string
+  /** Absolute path of the folder where new games are installed. */
+  gamesDir: string
+  /** Version of the installed conversion runtime, null when never installed. */
+  runtimeVersion: string | null
+  /** "owner/repo" queried for runtime releases. */
+  runtimeRepo: string
+}
+
+// ---- First-run bootstrap / runtime updates --------------------------------
+
+export interface RuntimeManifest {
+  version: string
+  installedAt: number
+  source: string
+}
+
+export type BootstrapStepId = 'check' | 'download' | 'extract' | 'install' | 'ready'
+
+export type BootstrapStepStatus = 'pending' | 'active' | 'done' | 'warn' | 'error'
+
+export interface BootstrapStep {
+  id: BootstrapStepId
+  label: string
+  status: BootstrapStepStatus
+  /** 0..100 download progress. */
+  percent?: number
+  detail?: string
+}
+
+export interface BootstrapResult {
+  ok: boolean
+  /** Installed runtime version after the run (null when nothing installed). */
+  runtimeVersion: string | null
+  /** True when a new runtime was downloaded and installed. */
+  updated: boolean
+  error?: string
+}
+
+// ---- Settings -------------------------------------------------------------
+
+export interface AppSettings {
+  /** Custom games folder, null = default (<libraryRoot>/games). */
+  gamesDir: string | null
+  runtimeRepo: string
+}
+
+export interface SetGamesDirResult {
+  ok: boolean
+  moved: number
+  error?: string
 }
 
 /** API exposed on window.api via the preload contextBridge. */
@@ -95,4 +145,12 @@ export interface LibraryApi {
   remove: (id: string) => Promise<{ ok: boolean }>
   onInstallProgress: (cb: (p: InstallProgress) => void) => () => void
   coverUrl: (game: Game) => string | null
+
+  /** Check for a runtime release and install it when missing/outdated. */
+  runBootstrap: () => Promise<BootstrapResult>
+  /** Streamed checklist progress while runBootstrap is executing. */
+  onBootstrapStep: (cb: (step: BootstrapStep) => void) => () => void
+  getSettings: () => Promise<AppSettings>
+  /** Point new installs at another folder, relocating installed games. */
+  setGamesDir: (dir: string) => Promise<SetGamesDirResult>
 }

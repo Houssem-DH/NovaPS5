@@ -5,7 +5,9 @@ import { launchGame } from './launch'
 import { installGame } from './pipeline/install'
 import { detectDump } from './pipeline/dump'
 import { findPython } from './python'
-import { toolsDir, runtimeLibsDir, libraryRoot, toolingPresent } from './paths'
+import { ensureRuntime, readRuntimeManifest } from './runtime'
+import { setGamesDir } from './settings'
+import { toolsDir, runtimeLibsDir, libraryRoot, gamesRoot, runtimeRepo, toolingPresent } from './paths'
 import type { AppInfo, ImportRequest } from '@shared/types'
 
 async function appInfo(): Promise<AppInfo> {
@@ -15,7 +17,10 @@ async function appInfo(): Promise<AppInfo> {
     relinkerPresent: relinker,
     libsPresent: libs,
     pythonPath: await findPython(),
-    libraryRoot: libraryRoot()
+    libraryRoot: libraryRoot(),
+    gamesDir: gamesRoot(),
+    runtimeVersion: readRuntimeManifest()?.version ?? null,
+    runtimeRepo: runtimeRepo()
   }
 }
 
@@ -57,4 +62,18 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     })
     return { jobId }
   })
+
+  // First-run bootstrap + on-launch runtime updates. Checklist steps stream
+  // over bootstrap:step; the promise resolves with the final result.
+  ipcMain.handle('bootstrap:run', () => {
+    const win = getWindow()
+    return ensureRuntime((step) => win?.webContents.send('bootstrap:step', step))
+  })
+
+  ipcMain.handle('settings:get', () => ({
+    gamesDir: gamesRoot(),
+    runtimeRepo: runtimeRepo()
+  }))
+
+  ipcMain.handle('settings:setGamesDir', (_e, dir: string) => setGamesDir(dir))
 }

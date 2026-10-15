@@ -1,5 +1,17 @@
 import { useEffect, useState } from 'react'
-import { Folder, Wrench, RefreshCw, CheckCircle2, XCircle, Terminal } from 'lucide-react'
+import type { ReactNode } from 'react'
+import {
+  CheckCircle2,
+  Download,
+  Folder,
+  FolderOpen,
+  Loader2,
+  Package,
+  RefreshCw,
+  Terminal,
+  Wrench,
+  XCircle
+} from 'lucide-react'
 import { useLibrary } from '@/store/useLibrary'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -9,12 +21,14 @@ function Row({
   icon: Icon,
   label,
   value,
-  ok
+  ok,
+  action
 }: {
   icon: typeof Folder
   label: string
   value: string
   ok?: boolean
+  action?: ReactNode
 }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-card/50 p-4">
@@ -28,11 +42,12 @@ function Row({
             (ok ? (
               <CheckCircle2 className="h-4 w-4 text-emerald-400" />
             ) : (
-              <XCircle className="h-4 w-4 text-amber-400" />
+              <XCircle className="h-4 w-4 text-red-400" />
             ))}
         </div>
         <div className="mt-0.5 break-all text-xs text-muted-foreground">{value}</div>
       </div>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   )
 }
@@ -40,6 +55,10 @@ function Row({
 export function SettingsView() {
   const { appInfo, refreshInfo } = useLibrary()
   const [checking, setChecking] = useState(false)
+  const [updating, setUpdating] = useState(false)
+  const [moving, setMoving] = useState(false)
+  const [runtimeMsg, setRuntimeMsg] = useState<string | null>(null)
+  const [gamesMsg, setGamesMsg] = useState<string | null>(null)
 
   useEffect(() => {
     void refreshInfo()
@@ -52,6 +71,39 @@ export function SettingsView() {
     setChecking(false)
   }
 
+  const checkUpdates = async (): Promise<void> => {
+    setUpdating(true)
+    setRuntimeMsg(null)
+    const result = await window.api.runBootstrap()
+    setRuntimeMsg(
+      result.ok
+        ? result.updated
+          ? `Runtime updated to v${result.runtimeVersion}.`
+          : `Runtime v${result.runtimeVersion ?? 'bundled'} is up to date.`
+        : (result.error ?? 'Update check failed.')
+    )
+    await refreshInfo()
+    setUpdating(false)
+  }
+
+  const changeGamesDir = async (): Promise<void> => {
+    const dir = await window.api.selectFolder()
+    if (!dir) return
+    if (dir === appInfo?.gamesDir) return
+    setMoving(true)
+    setGamesMsg(null)
+    const result = await window.api.setGamesDir(dir)
+    setGamesMsg(
+      result.ok
+        ? result.moved > 0
+          ? `Games folder changed — ${result.moved} game${result.moved === 1 ? '' : 's'} moved.`
+          : 'Games folder changed.'
+        : (result.error ?? 'Could not change the games folder.')
+    )
+    await refreshInfo()
+    setMoving(false)
+  }
+
   const pythonOk = !!appInfo?.pythonPath
   const toolsOk = appInfo?.relinkerPresent && appInfo?.libsPresent
   const allOk = pythonOk && toolsOk
@@ -61,11 +113,17 @@ export function SettingsView() {
       <div className="mb-7 flex items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-          <p className="text-sm text-muted-foreground">Conversion tooling and library locations.</p>
+          <p className="text-sm text-muted-foreground">Runtime updates, library locations, and tooling.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={recheck} disabled={checking}>
-          <RefreshCw className={cn('h-4 w-4', checking && 'animate-spin')} /> Re-check
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={checkUpdates} disabled={updating}>
+            <Download className={cn('h-4 w-4', updating && 'animate-pulse')} />
+            {updating ? 'Checking…' : 'Check for updates'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={recheck} disabled={checking}>
+            <RefreshCw className={cn('h-4 w-4', checking && 'animate-spin')} /> Re-check
+          </Button>
+        </div>
       </div>
 
       <div
@@ -84,9 +142,36 @@ export function SettingsView() {
 
       <div className="space-y-3">
         <Row
+          icon={Package}
+          label="Conversion runtime"
+          value={
+            appInfo?.runtimeVersion
+              ? `v${appInfo.runtimeVersion} — github.com/${appInfo.runtimeRepo}`
+              : 'Not installed yet — installs automatically on launch'
+          }
+          ok={toolsOk}
+          action={
+            <Button variant="outline" size="sm" onClick={checkUpdates} disabled={updating}>
+              {updating && <Loader2 className="h-4 w-4 animate-spin" />}
+              {updating ? 'Working…' : 'Update'}
+            </Button>
+          }
+        />
+        <Row
+          icon={FolderOpen}
+          label="Games folder"
+          value={appInfo?.gamesDir ?? '…'}
+          action={
+            <Button variant="outline" size="sm" onClick={changeGamesDir} disabled={moving}>
+              {moving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {moving ? 'Moving games…' : 'Change…'}
+            </Button>
+          }
+        />
+        <Row
           icon={Wrench}
           label="Relinker"
-          value={appInfo?.relinkerPresent ? 'relinker.exe found' : 'relinker.exe NOT found — run npm run setup:tools'}
+          value={appInfo?.relinkerPresent ? 'relinker.exe found' : 'relinker.exe missing — it installs automatically'}
           ok={appInfo?.relinkerPresent}
         />
         <Row
@@ -104,6 +189,21 @@ export function SettingsView() {
         <Row icon={Folder} label="Library folder" value={appInfo?.libraryRoot ?? '…'} />
         <Row icon={Folder} label="Tools folder" value={appInfo?.toolsDir ?? '…'} />
       </div>
+
+      {runtimeMsg && (
+        <p className="mt-3 text-xs text-muted-foreground" role="status">
+          {runtimeMsg}
+        </p>
+      )}
+      <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+        Changing the games folder relocates every already-installed game into the new location — large libraries can
+        take a while.
+      </p>
+      {gamesMsg && (
+        <p className="mt-1 text-xs text-muted-foreground" role="status">
+          {gamesMsg}
+        </p>
+      )}
 
       <Separator className="my-7" />
 

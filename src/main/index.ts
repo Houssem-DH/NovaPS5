@@ -3,6 +3,7 @@ import path from 'path'
 import fs from 'fs'
 import { registerIpc } from './ipc'
 import { gamesRoot, ensureDir } from './paths'
+import { getGame } from './library'
 
 // Must be registered before app ready. media:// serves cover images out of the
 // library folder without exposing the whole filesystem to the renderer.
@@ -44,14 +45,22 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // Serve <libraryRoot>/games/<...> over media://library/<relative-path>.
-  protocol.handle('media', (request) => {
+  // Serve <game.installPath>/<cover> over media://library/<gameId>/<cover>.
+  // Resolved through the game entry (not a fixed root) so covers keep working
+  // when games live in a custom folder.
+  protocol.handle('media', async (request) => {
     try {
       const url = new URL(request.url)
       const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
-      const root = gamesRoot()
-      const full = path.resolve(root, rel)
-      if (!full.startsWith(root)) return new Response('forbidden', { status: 403 })
+      const [id, ...rest] = rel.split('/').filter(Boolean)
+      if (!id || rest.length === 0) return new Response('not found', { status: 404 })
+
+      const game = await getGame(id)
+      if (!game) return new Response('not found', { status: 404 })
+
+      const root = path.resolve(game.installPath)
+      const full = path.resolve(root, rest.join('/'))
+      if (full !== root && !full.startsWith(root + path.sep)) return new Response('forbidden', { status: 403 })
 
       const data = fs.readFileSync(full)
       const ext = path.extname(full).toLowerCase()

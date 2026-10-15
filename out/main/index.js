@@ -5,9 +5,17 @@ const fs = require("fs");
 const crypto = require("crypto");
 const child_process = require("child_process");
 const util = require("util");
+const DEFAULT_RUNTIME_REPO = "boykopovar/AnyPS5";
+let toolsOverride = null;
+function setToolsOverride(dir) {
+  toolsOverride = dir;
+}
 function toolsDir() {
+  if (toolsOverride) return toolsOverride;
   if (electron.app.isPackaged) {
-    return path.join(process.resourcesPath, "tools");
+    const installed = path.join(process.resourcesPath, "tools");
+    if (fs.existsSync(installed) && isWritableDir(installed)) return installed;
+    return path.join(electron.app.getPath("userData"), "tools");
   }
   return path.join(electron.app.getAppPath(), "resources", "tools");
 }
@@ -17,20 +25,63 @@ function relinkerPath() {
 function unwrapScriptPath() {
   return path.join(toolsDir(), "unwrap_self.py");
 }
+function unwrapSourcePath() {
+  return path.join(electron.app.getAppPath(), "scripts", "unwrap_self.py");
+}
 function runtimeLibsDir() {
   return path.join(toolsDir(), "libs");
 }
 function libraryRoot() {
-  return path.join(electron.app.getPath("documents"), "PS5 Library");
+  const docs = electron.app.getPath("documents");
+  const legacy = path.join(docs, "PS5 Library");
+  try {
+    if (fs.existsSync(legacy)) return legacy;
+  } catch {
+  }
+  return path.join(docs, "NovaPS5 Library");
+}
+function configFile() {
+  return path.join(libraryRoot(), "config.json");
+}
+let configCache = null;
+function loadConfig() {
+  if (configCache) return configCache;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configFile(), "utf8"));
+    configCache = parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    configCache = {};
+  }
+  return configCache;
+}
+function saveConfig(cfg) {
+  configCache = cfg;
+  ensureDir(libraryRoot());
+  fs.writeFileSync(configFile(), JSON.stringify(cfg, null, 2), "utf8");
 }
 function gamesRoot() {
+  const custom = loadConfig().gamesDir;
+  if (custom) return custom;
   return path.join(libraryRoot(), "games");
+}
+function runtimeRepo() {
+  return loadConfig().runtimeRepo || DEFAULT_RUNTIME_REPO;
 }
 function libraryFile() {
   return path.join(libraryRoot(), "library.json");
 }
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
+}
+function isWritableDir(dir) {
+  try {
+    const probe = path.join(dir, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probe, "");
+    fs.rmSync(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 function toolingPresent() {
   const libs = runtimeLibsDir();
@@ -100,6 +151,17 @@ async function touchPlay(id) {
     game.lastPlayedAt = Date.now();
     await persist();
   }
+}
+async function relocateGames(updates) {
+  const data = await load();
+  for (const update of updates) {
+    const game = data.games.find((g) => g.id === update.id);
+    if (game) {
+      game.installPath = update.installPath;
+      game.exePath = update.exePath;
+    }
+  }
+  await persist();
 }
 async function launchGame(id) {
   const game = await getGame(id);
@@ -190,7 +252,7 @@ function extractFailure(output) {
   const last = lines[lines.length - 1];
   return last ?? null;
 }
-const execFileAsync = util.promisify(child_process.execFile);
+const execFileAsync$2 = util.promisify(child_process.execFile);
 let cached;
 async function findPython() {
   if (cached !== void 0) return cached;
@@ -201,7 +263,7 @@ async function findPython() {
   ];
   for (const { cmd, prefixArgs } of candidates) {
     try {
-      const { stdout, stderr } = await execFileAsync(cmd, [...prefixArgs, "--version"], {
+      const { stdout, stderr } = await execFileAsync$2(cmd, [...prefixArgs, "--version"], {
         windowsHide: true,
         timeout: 1e4
       });
@@ -406,7 +468,7 @@ async function readMeta(sourceDir) {
   }
   return { name, titleId, hasCover };
 }
-async function extractZip(zip, dest) {
+async function extractZip$1(zip, dest) {
   await fs.promises.mkdir(dest, { recursive: true });
   const { code, stderr } = await run("tar", ["-xf", zip, "-C", dest], {
     timeoutMs: 30 * 60 * 1e3
@@ -418,7 +480,7 @@ async function extractZip(zip, dest) {
 async function resolveSource(sourcePath) {
   if (/\.zip$/i.test(sourcePath)) {
     const tempDir = path.join(electron.app.getPath("temp"), `ps5lib-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
-    await extractZip(sourcePath, tempDir);
+    await extractZip$1(sourcePath, tempDir);
     const root2 = await locateDumpRoot(tempDir) ?? tempDir;
     return { root: root2, tempDir };
   }
@@ -451,11 +513,12 @@ async function detectDump(sourcePath) {
 function isBackup(name) {
   return name.endsWith(".esbak");
 }
+const activeStages = /* @__PURE__ */ new Set();
 async function installGame(sourcePath, nameOverride, report, jobId) {
   let step = "validating";
   let percent = 0;
   let tempDir = null;
-  let createdId = null;
+  let stageDir = null;
   const emit = (message, pct, s) => {
     step = s;
     percent = Math.round(pct);
@@ -480,8 +543,17 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       const taken = async (candidate) => !!await getGame(candidate) || fs.existsSync(path.join(gamesRoot(), candidate));
       while (await taken(id)) id = `${baseId}-${n++}`;
     }
-    const installDir = path.join(gamesRoot(), id);
-    createdId = id;
+    const finalDir = path.join(gamesRoot(), id);
+    const stageName = `.staging-${id}-${Date.now()}`;
+    const installDir = path.join(gamesRoot(), stageName);
+    stageDir = installDir;
+    activeStages.add(stageName);
+    for (const entry of await fs.promises.readdir(gamesRoot()).catch(() => [])) {
+      if (entry.startsWith(".staging-") && !activeStages.has(entry)) {
+        await fs.promises.rm(path.join(gamesRoot(), entry), { recursive: true, force: true }).catch(() => {
+        });
+      }
+    }
     await fs.promises.rm(installDir, { recursive: true, force: true });
     ensureDir(installDir);
     const entries = (await fs.promises.readdir(dumpRoot, { withFileTypes: true })).filter(
@@ -513,11 +585,16 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     }
     const ebootDest = path.join(installDir, "eboot.bin");
     const inputElf = path.join(installDir, "input.elf");
-    if (detectContainer(ebootDest) === "self") {
+    const ebootKind = detectContainer(ebootDest);
+    if (ebootKind === "self") {
       emit("Unwrapping eboot (SELF → ELF)…", 55, "unwrapping-eboot");
       await unwrapSelf(ebootDest, inputElf);
-    } else {
+    } else if (ebootKind === "elf") {
       await fs.promises.copyFile(ebootDest, inputElf);
+    } else {
+      throw new Error(
+        "eboot.bin is neither a plain ELF nor a SELF container — the dump file is corrupted or incomplete."
+      );
     }
     emit("Preparing modules…", 60, "preparing-modules");
     const prxDirs = [];
@@ -553,9 +630,14 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       for (const file of await fs.promises.readdir(dir)) {
         if (!file.endsWith(".prx")) continue;
         const filePath = path.join(dir, file);
-        if (detectContainer(filePath) === "self") {
+        const kind = detectContainer(filePath);
+        if (kind === "self") {
           emit(`Unwrapping ${file}…`, 60, "preparing-modules");
           await unwrapSelf(filePath, filePath);
+        } else if (kind !== "elf") {
+          throw new Error(
+            `${path.join(rel, file)} is neither a plain ELF nor a SELF container — the dump's module is corrupted or incomplete.`
+          );
         }
       }
     }
@@ -592,14 +674,31 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       });
       tempDir = null;
     }
-    const sizeBytes = await dirSize(installDir);
+    const retire = `${finalDir}.old`;
+    await fs.promises.rm(retire, { recursive: true, force: true }).catch(() => {
+    });
+    if (fs.existsSync(finalDir)) {
+      await fs.promises.rename(finalDir, retire);
+    }
+    try {
+      await fs.promises.rename(installDir, finalDir);
+    } catch (swapError) {
+      if (fs.existsSync(retire)) await fs.promises.rename(retire, finalDir).catch(() => {
+      });
+      throw swapError;
+    }
+    await fs.promises.rm(retire, { recursive: true, force: true }).catch(() => {
+    });
+    activeStages.delete(stageName);
+    stageDir = null;
+    const sizeBytes = await dirSize(finalDir);
     const game = {
       id,
       name,
       titleId: meta.titleId,
       sourcePath: dumpRoot,
-      installPath: installDir,
-      exePath,
+      installPath: finalDir,
+      exePath: path.join(finalDir, path.basename(exePath)),
       sizeBytes,
       cover,
       status: "ready",
@@ -611,15 +710,468 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
   } catch (error) {
     if (tempDir) await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
     });
-    if (createdId) {
-      await removeGame(createdId).catch(() => {
-      });
-      await fs.promises.rm(path.join(gamesRoot(), createdId), { recursive: true, force: true }).catch(() => {
+    if (stageDir) {
+      activeStages.delete(path.basename(stageDir));
+      await fs.promises.rm(stageDir, { recursive: true, force: true }).catch(() => {
       });
     }
     const message = error instanceof Error ? error.message : String(error);
     report({ jobId, step, message: "Failed", percent, status: "error", error: message });
     throw error;
+  }
+}
+const execFileAsync$1 = util.promisify(child_process.execFile);
+const RUNTIME_ASSET = "novaps5-runtime-win-x64.zip";
+const MANIFEST_NAME = "runtime.json";
+let running = null;
+function readRuntimeManifest(dir = toolsDir()) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, MANIFEST_NAME), "utf8"));
+    if (parsed && typeof parsed.version === "string") return parsed;
+  } catch {
+  }
+  return null;
+}
+function writeManifest(dir, manifest) {
+  fs.writeFileSync(path.join(dir, MANIFEST_NAME), JSON.stringify(manifest, null, 2), "utf8");
+}
+function mb(bytes) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+function normalizeVersion(tag) {
+  const flat = tag.replace(/^runtime[-v]*/i, "").replace(/^v/i, "");
+  return flat || tag;
+}
+function requestBuffer(url, headers, timeoutMs, redirect = 0) {
+  return new Promise((resolve, reject) => {
+    const request = electron.net.request(url);
+    for (const [key, value] of Object.entries(headers)) request.setHeader(key, value);
+    const timer = setTimeout(() => {
+      request.abort();
+      reject(new Error("timed out"));
+    }, timeoutMs);
+    const chunks = [];
+    request.on("response", (response) => {
+      const rawLocation = response.headers["location"];
+      const location = Array.isArray(rawLocation) ? rawLocation[0] : rawLocation;
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        clearTimeout(timer);
+        const status = response.statusCode ?? 0;
+        if (status >= 300 && status < 400 && location) {
+          if (redirect >= 5) return reject(new Error("too many redirects"));
+          resolve(requestBuffer(new URL(location, url).toString(), headers, timeoutMs, redirect + 1));
+          return;
+        }
+        resolve({ status, body: Buffer.concat(chunks) });
+      });
+      response.on("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+    request.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    request.end();
+  });
+}
+async function fetchHtml(url) {
+  const response = await requestBuffer(
+    url,
+    {
+      "User-Agent": "NovaPS5",
+      Accept: "text/html,application/xhtml+xml",
+      // deterministic body — some middleboxes gzip regardless of support
+      "Accept-Encoding": "identity"
+    },
+    2e4
+  );
+  if (response.status === 404) return "";
+  if (response.status !== 200) throw new Error(`GitHub returned HTTP ${response.status}`);
+  return response.body.toString("utf8");
+}
+function parseAssets(repo, html) {
+  const out = [];
+  const parts = html.split("/releases/download/");
+  for (let i = 1; i < parts.length; i++) {
+    const match = parts[i].match(/^([^/"]+)\/([^"?]+)"/);
+    if (!match) continue;
+    const sha = parts[i].match(/sha256:([0-9a-f]{64})/i);
+    out.push({
+      name: decodeURIComponent(match[2]),
+      url: `https://github.com/${repo}/releases/download/${match[1]}/${match[2]}`,
+      sha256: sha ? sha[1].toLowerCase() : null
+    });
+  }
+  return out;
+}
+async function findLatestRuntime(repo) {
+  const listHtml = await fetchHtml(`https://github.com/${repo}/releases`);
+  if (!listHtml) return null;
+  const tagMatch = listHtml.match(/\/releases\/tag\/([^"'?#<\s]+)/);
+  if (!tagMatch) return null;
+  const tag = decodeURIComponent(tagMatch[1]);
+  const assets = parseAssets(repo, await fetchHtml(`https://github.com/${repo}/releases/expanded_assets/${encodeURIComponent(tag)}`));
+  return {
+    version: normalizeVersion(tag),
+    tag,
+    prx: assets.find((a) => /^prx-windows-.+\.zip$/i.test(a.name)),
+    relinker: assets.find((a) => /^relinker-.+\.exe$/i.test(a.name)),
+    bundle: assets.find((a) => a.name === RUNTIME_ASSET)
+  };
+}
+function downloadFile(url, dest, onPercent, redirect = 0) {
+  return new Promise((resolve, reject) => {
+    const request = electron.net.request(url);
+    request.setHeader("User-Agent", "NovaPS5");
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      request.abort();
+      finish(new Error("download timed out"));
+    }, 15 * 6e4);
+    request.on("response", (response) => {
+      const status = response.statusCode ?? 0;
+      const rawLocation = response.headers["location"];
+      const location = Array.isArray(rawLocation) ? rawLocation[0] : rawLocation;
+      if (status >= 300 && status < 400 && location) {
+        response.resume();
+        clearTimeout(timer);
+        if (redirect >= 5) return finish(new Error("too many redirects"));
+        downloadFile(new URL(location, url).toString(), dest, onPercent, redirect + 1).then(
+          () => finish(),
+          (err) => finish(err)
+        );
+        return;
+      }
+      if (status !== 200) {
+        response.resume();
+        clearTimeout(timer);
+        return finish(new Error(`download failed (HTTP ${status})`));
+      }
+      const rawLength = response.headers["content-length"];
+      const total = Number(Array.isArray(rawLength) ? rawLength[0] : rawLength ?? 0);
+      let received = 0;
+      let lastPct = -1;
+      const out = fs.createWriteStream(dest);
+      out.on("error", (err) => {
+        clearTimeout(timer);
+        finish(err);
+      });
+      response.on("data", (chunk) => {
+        received += chunk.length;
+        if (total > 0) {
+          const pct = Math.min(99, Math.floor(received * 100 / total));
+          if (pct !== lastPct) {
+            lastPct = pct;
+            onPercent(pct);
+          }
+        }
+      });
+      response.on("end", () => {
+        out.end(() => {
+          clearTimeout(timer);
+          onPercent(100);
+          finish();
+        });
+      });
+      response.on("error", (err) => {
+        clearTimeout(timer);
+        finish(err);
+      });
+      response.pipe(out);
+    });
+    request.on("error", (err) => {
+      clearTimeout(timer);
+      finish(err instanceof Error ? err : new Error(String(err)));
+    });
+    request.end();
+  });
+}
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(file);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
+}
+async function downloadAsset(asset, dest, label, emit, detail) {
+  await downloadFile(asset.url, dest, (percent) => {
+    emit({ id: "download", label, status: "active", percent, detail });
+  });
+  if (asset.sha256) {
+    const actual = await sha256File(dest);
+    if (actual !== asset.sha256) throw new Error(`checksum mismatch for ${asset.name}`);
+  }
+}
+async function extractZip(zipPath, destDir) {
+  ensureDir(destDir);
+  const esc = (p) => p.replace(/'/g, "''");
+  await execFileAsync$1(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      `Expand-Archive -LiteralPath '${esc(zipPath)}' -DestinationPath '${esc(destDir)}' -Force`
+    ],
+    { windowsHide: true }
+  );
+}
+function looksLikeRuntime(dir) {
+  try {
+    const libs = path.join(dir, "libs");
+    const hasLibs = fs.existsSync(libs) && fs.readdirSync(libs).some((f) => f.endsWith(".prx"));
+    return fs.existsSync(path.join(dir, "relinker.exe")) && hasLibs;
+  } catch {
+    return false;
+  }
+}
+function ensureUnwrapScript(targetDir) {
+  try {
+    const dest = path.join(targetDir, "unwrap_self.py");
+    const source = unwrapSourcePath();
+    if (!fs.existsSync(source)) return;
+    const incoming = fs.readFileSync(source);
+    let current = null;
+    try {
+      current = fs.readFileSync(dest);
+    } catch {
+      current = null;
+    }
+    if (current && current.equals(incoming)) return;
+    fs.writeFileSync(dest, incoming);
+  } catch {
+  }
+}
+function installTarget() {
+  const current = toolsDir();
+  try {
+    ensureDir(current);
+    const probe = path.join(current, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probe, "");
+    fs.rmSync(probe, { force: true });
+    return current;
+  } catch {
+    const fallback = path.join(electron.app.getPath("userData"), "tools");
+    setToolsOverride(fallback);
+    ensureDir(fallback);
+    return fallback;
+  }
+}
+function swapIn(stageDir, target) {
+  const backup = `${target}.old`;
+  fs.rmSync(backup, { recursive: true, force: true });
+  if (fs.existsSync(target)) {
+    fs.renameSync(target, backup);
+    try {
+      fs.renameSync(stageDir, target);
+    } catch (err) {
+      fs.renameSync(backup, target);
+      throw err;
+    }
+    fs.rmSync(backup, { recursive: true, force: true });
+  } else {
+    fs.renameSync(stageDir, target);
+  }
+}
+async function ensureRuntimeOnce(emit) {
+  const step = (s) => emit(s);
+  const fail = (id, label, error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    step({ id, label, status: "error", detail: message });
+    return { ok: false, runtimeVersion: readRuntimeManifest()?.version ?? null, updated: false, error: message };
+  };
+  const ready = (runtimeVersion, updated) => {
+    step({ id: "ready", label: "Ready", status: "done", detail: updated ? "Runtime installed" : void 0 });
+    return { ok: true, runtimeVersion, updated };
+  };
+  const target = installTarget();
+  ensureUnwrapScript(target);
+  const checkLabel = "Checking for runtime updates";
+  step({ id: "check", label: checkLabel, status: "active" });
+  const present = toolingPresent();
+  const toolsReady = present.relinker && present.libs;
+  const manifest = readRuntimeManifest(target);
+  let release = null;
+  try {
+    release = await findLatestRuntime(runtimeRepo());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (toolsReady) {
+      step({ id: "check", label: checkLabel, status: "warn", detail: `Offline (${message}) — using installed runtime` });
+      return ready(manifest?.version ?? null, false);
+    }
+    return fail("check", checkLabel, `Runtime not installed and update check failed: ${message}`);
+  }
+  if (!release) {
+    if (toolsReady) {
+      step({ id: "check", label: checkLabel, status: "done", detail: `Runtime v${manifest?.version ?? "bundled"} — no releases published yet` });
+      if (!manifest) {
+        writeManifest(target, { version: "bundled", installedAt: Date.now(), source: `github:${runtimeRepo()}` });
+      }
+      return ready(manifest?.version ?? "bundled", false);
+    }
+    return fail("check", checkLabel, "Runtime not installed and no release has been published yet.");
+  }
+  if (toolsReady && manifest?.version === release.version) {
+    step({ id: "check", label: checkLabel, status: "done", detail: `Runtime v${release.version} is up to date` });
+    return ready(release.version, false);
+  }
+  step({
+    id: "check",
+    label: checkLabel,
+    status: "done",
+    detail: !toolsReady ? `Runtime ${release.version} will be installed` : `Update available: ${manifest?.version ?? "unknown"} → ${release.version}`
+  });
+  const stamp = Date.now();
+  const tempDir = electron.app.getPath("temp");
+  const downloadLabel = `Downloading runtime v${release.version}`;
+  const planned = [];
+  if (release.bundle) {
+    planned.push({ kind: "bundle", asset: release.bundle, dest: path.join(tempDir, `nova-runtime-${stamp}.zip`) });
+  } else {
+    if (release.prx) planned.push({ kind: "prx", asset: release.prx, dest: path.join(tempDir, `nova-prx-${stamp}.zip`) });
+    if (release.relinker) {
+      planned.push({ kind: "relinker", asset: release.relinker, dest: path.join(tempDir, `nova-relinker-${stamp}.exe`) });
+    }
+  }
+  if (planned.length === 0) {
+    return fail("download", downloadLabel, `release ${release.tag} has no Windows runtime assets`);
+  }
+  try {
+    step({ id: "download", label: downloadLabel, status: "active", percent: 0 });
+    let totalBytes = 0;
+    for (let i = 0; i < planned.length; i++) {
+      const file = planned[i];
+      const detail = planned.length > 1 ? `${i + 1}/${planned.length} ${file.asset.name}` : file.asset.name;
+      await downloadAsset(file.asset, file.dest, downloadLabel, emit, detail);
+      totalBytes += fs.statSync(file.dest).size;
+    }
+    step({ id: "download", label: downloadLabel, status: "done", detail: `${mb(totalBytes)} — ${planned.length} file${planned.length === 1 ? "" : "s"}` });
+  } catch (error) {
+    for (const file of planned) fs.rmSync(file.dest, { force: true });
+    return fail("download", downloadLabel, error);
+  }
+  const staging = path.join(path.dirname(target), `.runtime-staging-${stamp}`);
+  try {
+    step({ id: "extract", label: "Extracting files", status: "active" });
+    fs.rmSync(staging, { recursive: true, force: true });
+    ensureDir(staging);
+    const bundle = planned.find((f) => f.kind === "bundle");
+    const prx = planned.find((f) => f.kind === "prx");
+    const relinker = planned.find((f) => f.kind === "relinker");
+    if (bundle) {
+      await extractZip(bundle.dest, staging);
+    } else {
+      if (!prx) throw new Error("release is missing prx-windows-*.zip");
+      if (!relinker) throw new Error("release is missing relinker-*.exe");
+      await extractZip(prx.dest, staging);
+      fs.copyFileSync(relinker.dest, path.join(staging, "relinker.exe"));
+    }
+    if (!looksLikeRuntime(staging)) {
+      throw new Error("extracted files are missing relinker.exe or libs/*.prx");
+    }
+    step({ id: "extract", label: "Extracting files", status: "done" });
+  } catch (error) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    for (const file of planned) fs.rmSync(file.dest, { force: true });
+    return fail("extract", "Extracting files", error);
+  }
+  try {
+    step({ id: "install", label: "Installing runtime", status: "active" });
+    swapIn(staging, target);
+    ensureUnwrapScript(target);
+    writeManifest(target, {
+      version: release.version,
+      installedAt: Date.now(),
+      source: `github:${runtimeRepo()}`
+    });
+    for (const file of planned) fs.rmSync(file.dest, { force: true });
+    step({ id: "install", label: "Installing runtime", status: "done", detail: `v${release.version}` });
+  } catch (error) {
+    fs.rmSync(staging, { recursive: true, force: true });
+    for (const file of planned) fs.rmSync(file.dest, { force: true });
+    return fail("install", "Installing runtime", error);
+  }
+  return ready(release.version, true);
+}
+function ensureRuntime(emit) {
+  if (!running) {
+    running = ensureRuntimeOnce(emit).finally(() => {
+      running = null;
+    });
+  }
+  return running;
+}
+const execFileAsync = util.promisify(child_process.execFile);
+async function moveDir(src, dst) {
+  try {
+    await fs.promises.rename(src, dst);
+    return;
+  } catch {
+  }
+  try {
+    await execFileAsync("xcopy", [src, dst, "/E", "/I", "/H", "/Y", "/Q"], { windowsHide: true });
+  } catch (error) {
+    const code = error.code;
+    if (code !== 1) throw error;
+  }
+  ensureDir(dst);
+  await fs.promises.rm(src, { recursive: true, force: true });
+}
+async function setGamesDir(dir) {
+  const target = path.resolve(dir);
+  const current = path.resolve(gamesRoot());
+  if (target === current) return { ok: true, moved: 0 };
+  try {
+    ensureDir(target);
+  } catch (error) {
+    return { ok: false, moved: 0, error: error instanceof Error ? error.message : String(error) };
+  }
+  const games = await listGames();
+  const moving = games.filter((g) => path.resolve(path.dirname(g.installPath)) === current);
+  for (const game of moving) {
+    const dest = path.join(target, path.basename(game.installPath));
+    if (path.resolve(dest) !== path.resolve(game.installPath) && fs.existsSync(dest)) {
+      return {
+        ok: false,
+        moved: 0,
+        error: `A folder named "${path.basename(game.installPath)}" already exists in the chosen directory.`
+      };
+    }
+  }
+  let moved = 0;
+  try {
+    for (const game of moving) {
+      const dest = path.join(target, path.basename(game.installPath));
+      if (path.resolve(dest) !== path.resolve(game.installPath)) {
+        await moveDir(game.installPath, dest);
+      }
+      const exePath = game.exePath.startsWith(game.installPath) ? dest + game.exePath.slice(game.installPath.length) : path.join(dest, path.basename(game.exePath));
+      await relocateGames([{ id: game.id, installPath: dest, exePath }]);
+      moved++;
+    }
+    saveConfig({ ...loadConfig(), gamesDir: target });
+    ensureDir(gamesRoot());
+    return { ok: true, moved };
+  } catch (error) {
+    return {
+      ok: false,
+      moved,
+      error: error instanceof Error ? error.message : String(error)
+    };
   }
 }
 async function appInfo() {
@@ -629,7 +1181,10 @@ async function appInfo() {
     relinkerPresent: relinker,
     libsPresent: libs,
     pythonPath: await findPython(),
-    libraryRoot: libraryRoot()
+    libraryRoot: libraryRoot(),
+    gamesDir: gamesRoot(),
+    runtimeVersion: readRuntimeManifest()?.version ?? null,
+    runtimeRepo: runtimeRepo()
   };
 }
 function registerIpc(getWindow) {
@@ -664,6 +1219,15 @@ function registerIpc(getWindow) {
     });
     return { jobId };
   });
+  electron.ipcMain.handle("bootstrap:run", () => {
+    const win = getWindow();
+    return ensureRuntime((step) => win?.webContents.send("bootstrap:step", step));
+  });
+  electron.ipcMain.handle("settings:get", () => ({
+    gamesDir: gamesRoot(),
+    runtimeRepo: runtimeRepo()
+  }));
+  electron.ipcMain.handle("settings:setGamesDir", (_e, dir) => setGamesDir(dir));
 }
 electron.protocol.registerSchemesAsPrivileged([
   { scheme: "media", privileges: { standard: true, secure: true, supportFetchAPI: true } }
@@ -697,13 +1261,17 @@ function createWindow() {
   });
 }
 electron.app.whenReady().then(() => {
-  electron.protocol.handle("media", (request) => {
+  electron.protocol.handle("media", async (request) => {
     try {
       const url = new URL(request.url);
       const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
-      const root = gamesRoot();
-      const full = path.resolve(root, rel);
-      if (!full.startsWith(root)) return new Response("forbidden", { status: 403 });
+      const [id, ...rest] = rel.split("/").filter(Boolean);
+      if (!id || rest.length === 0) return new Response("not found", { status: 404 });
+      const game = await getGame(id);
+      if (!game) return new Response("not found", { status: 404 });
+      const root = path.resolve(game.installPath);
+      const full = path.resolve(root, rest.join("/"));
+      if (full !== root && !full.startsWith(root + path.sep)) return new Response("forbidden", { status: 403 });
       const data = fs.readFileSync(full);
       const ext = path.extname(full).toLowerCase();
       const type = ext === ".png" ? "image/png" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "application/octet-stream";

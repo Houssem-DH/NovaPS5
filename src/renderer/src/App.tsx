@@ -5,11 +5,16 @@ import { LibraryView } from '@/components/LibraryView'
 import { GameDetail } from '@/components/GameDetail'
 import { SettingsView } from '@/components/SettingsView'
 import { InstallDialog } from '@/components/InstallDialog'
+import { BootstrapScreen } from '@/components/BootstrapScreen'
 
 export default function App() {
-  const { view, selectedId, load, refreshInfo, setInstalling } = useLibrary()
+  const { view, selectedId, load, refreshInfo, setInstalling, bootstrapped, setBootstrapped } = useLibrary()
 
   useEffect(() => {
+    // Library IO waits for the runtime bootstrap — the checklist screen owns
+    // the window until the tooling is guaranteed present.
+    if (!bootstrapped) return
+
     void load()
     void refreshInfo()
 
@@ -19,7 +24,11 @@ export default function App() {
     })
     return unsubscribe
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [bootstrapped])
+
+  if (!bootstrapped) {
+    return <BootstrapScreen onDone={() => setBootstrapped(true)} />
+  }
 
   const showDetail = view === 'library' && !!selectedId
 
@@ -28,7 +37,8 @@ export default function App() {
       <Sidebar />
       <main className="app-bg flex-1 overflow-y-auto">
         <div className="mx-auto max-w-6xl px-8 py-8">
-          {view === 'settings' ? <SettingsView /> : showDetail ? <GameDetail /> : <LibraryView />}
+          {view === 'library' && (showDetail ? <GameDetail /> : <LibraryView />)}
+          {view === 'settings' && <SettingsView />}
         </div>
       </main>
       <InstallDialog />

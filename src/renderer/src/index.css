@@ -13,7 +13,7 @@
     --popover: 240 6% 7%;
     --popover-foreground: 0 0% 98%;
 
-    --primary: 217 91% 60%;
+    --primary: 31 51% 46%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 240 5% 12%;
@@ -30,9 +30,9 @@
 
     --border: 240 5% 16%;
     --input: 240 5% 16%;
-    --ring: 217 91% 60%;
+    --ring: 31 51% 46%;
 
-    --play: 217 91% 60%;
+    --play: 31 51% 46%;
     --play-foreground: 0 0% 100%;
 
     --radius: 0.75rem;
@@ -81,22 +81,22 @@
 }
 
 @layer utilities {
-  /* Play button gradient */
+  /* Play button gradient — brand copper (#B27739) into warm highlight */
   .gradient-play {
-    background-image: linear-gradient(135deg, hsl(217 91% 60%), hsl(262 83% 62%));
+    background-image: linear-gradient(135deg, hsl(31 51% 46%), hsl(38 72% 55%));
   }
 
   /* Ambient hero glow behind the top of the app */
   .app-bg {
     background:
-      radial-gradient(1200px 620px at 82% -12%, hsl(217 91% 60% / 0.12), transparent 60%),
-      radial-gradient(900px 520px at -8% 112%, hsl(262 83% 62% / 0.1), transparent 55%);
+      radial-gradient(1200px 620px at 82% -12%, hsl(31 51% 46% / 0.1), transparent 60%),
+      radial-gradient(900px 520px at -8% 112%, hsl(31 51% 46% / 0.06), transparent 55%);
   }
 
   /* Fallback tile when a game has no cover art */
   .cover-fallback {
     background:
       linear-gradient(160deg, hsl(240 6% 12%), hsl(240 8% 8%)),
-      radial-gradient(60% 50% at 30% 20%, hsl(217 91% 60% / 0.22), transparent);
+      radial-gradient(60% 50% at 30% 20%, hsl(31 51% 46% / 0.24), transparent);
   }
 }

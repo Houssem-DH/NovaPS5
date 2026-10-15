@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Library, Settings, Plus, Gamepad2 } from 'lucide-react'
+import { Library, Settings, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLibrary } from '@/store/useLibrary'
 import { Button } from '@/components/ui/button'
@@ -37,11 +37,21 @@ export function Sidebar() {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border/60 bg-card/30">
       <div className="flex items-center gap-3 px-5 py-5">
-        <div className="gradient-play flex h-10 w-10 items-center justify-center rounded-xl shadow-lg shadow-primary/20">
-          <Gamepad2 className="h-5 w-5 text-white" />
-        </div>
+        <img
+          src="logo.png"
+          alt="NovaPS5"
+          className="h-10 w-10 rounded-xl shadow-lg shadow-primary/25"
+          onError={(event) => {
+            // Logo missing (partial clone) — fall back to the brand tile.
+            const el = event.currentTarget
+            el.style.display = 'none'
+            el.parentElement?.classList.add('gradient-play', 'h-10', 'w-10', 'rounded-xl')
+          }}
+        />
         <div className="leading-tight">
-          <div className="text-sm font-semibold tracking-tight">PS5 Library</div>
+          <div className="text-sm font-semibold tracking-tight">
+            Nova<span className="text-primary">PS5</span>
+          </div>
           <div className="text-[11px] text-muted-foreground">Powered by AnyPS5</div>
         </div>
       </div>

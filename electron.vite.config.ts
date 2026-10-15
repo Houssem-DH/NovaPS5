@@ -24,6 +24,9 @@ export default defineConfig({
     }
   },
   renderer: {
+    // Project-level public/ (logo, icon, favicon) — not the default
+    // src/renderer/public, which doesn't exist.
+    publicDir: resolve('public'),
     resolve: {
       alias: {
         '@': resolve('src/renderer/src'),

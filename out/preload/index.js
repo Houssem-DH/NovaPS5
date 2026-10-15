@@ -14,6 +14,14 @@ const api = {
     electron.ipcRenderer.on("install:progress", listener);
     return () => electron.ipcRenderer.removeListener("install:progress", listener);
   },
-  coverUrl: (game) => game.cover ? `media://library/${game.id}/${game.cover}` : null
+  coverUrl: (game) => game.cover ? `media://library/${game.id}/${game.cover}` : null,
+  runBootstrap: () => electron.ipcRenderer.invoke("bootstrap:run"),
+  onBootstrapStep: (cb) => {
+    const listener = (_event, step) => cb(step);
+    electron.ipcRenderer.on("bootstrap:step", listener);
+    return () => electron.ipcRenderer.removeListener("bootstrap:step", listener);
+  },
+  getSettings: () => electron.ipcRenderer.invoke("settings:get"),
+  setGamesDir: (dir) => electron.ipcRenderer.invoke("settings:setGamesDir", dir)
 };
 electron.contextBridge.exposeInMainWorld("api", api);

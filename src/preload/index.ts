@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Game, ImportRequest, InstallProgress, LibraryApi } from '@shared/types'
+import type { BootstrapStep, Game, ImportRequest, InstallProgress, LibraryApi } from '@shared/types'
 
 const api: LibraryApi = {
   appInfo: () => ipcRenderer.invoke('app:info'),
@@ -15,7 +15,16 @@ const api: LibraryApi = {
     ipcRenderer.on('install:progress', listener)
     return () => ipcRenderer.removeListener('install:progress', listener)
   },
-  coverUrl: (game: Game) => (game.cover ? `media://library/${game.id}/${game.cover}` : null)
+  coverUrl: (game: Game) => (game.cover ? `media://library/${game.id}/${game.cover}` : null),
+
+  runBootstrap: () => ipcRenderer.invoke('bootstrap:run'),
+  onBootstrapStep: (cb: (step: BootstrapStep) => void) => {
+    const listener = (_event: unknown, step: BootstrapStep): void => cb(step)
+    ipcRenderer.on('bootstrap:step', listener)
+    return () => ipcRenderer.removeListener('bootstrap:step', listener)
+  },
+  getSettings: () => ipcRenderer.invoke('settings:get'),
+  setGamesDir: (dir: string) => ipcRenderer.invoke('settings:setGamesDir', dir)
 }
 
 contextBridge.exposeInMainWorld('api', api)
