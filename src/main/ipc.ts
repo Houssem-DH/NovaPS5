@@ -1,11 +1,13 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { randomUUID } from 'crypto'
-import { listGames, removeGame } from './library'
+import { listGames, removeGame, scanLibrary } from './library'
 import { launchGame } from './launch'
 import { installGame } from './pipeline/install'
 import { detectDump } from './pipeline/dump'
-import { findPython } from './python'
-import { toolsDir, runtimeLibsDir, libraryRoot, toolingPresent } from './paths'
+import { findPython, pythonInvocation } from './python'
+import { ensureRuntime, readRuntimeManifest } from './runtime'
+import { setGamesDir } from './settings'
+import { toolsDir, runtimeLibsDir, libraryRoot, gamesRoot, runtimeRepo, toolingPresent } from './paths'
 import type { AppInfo, ImportRequest } from '@shared/types'
 
 async function appInfo(): Promise<AppInfo> {
@@ -15,7 +17,11 @@ async function appInfo(): Promise<AppInfo> {
     relinkerPresent: relinker,
     libsPresent: libs,
     pythonPath: await findPython(),
-    libraryRoot: libraryRoot()
+    pythonBundled: (await pythonInvocation())?.bundled ?? false,
+    libraryRoot: libraryRoot(),
+    gamesDir: gamesRoot(),
+    runtimeVersion: readRuntimeManifest()?.version ?? null,
+    runtimeRepo: runtimeRepo()
   }
 }
 
@@ -33,7 +39,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const win = getWindow()
     const options: Electron.OpenDialogOptions = {
       properties: ['openFile'],
-      filters: [{ name: 'PS5 dump archive', extensions: ['zip'] }]
+      filters: [{ name: 'PS5 dump archive', extensions: ['zip', 'rar', '7z'] }]
     }
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     return result.canceled ? null : result.filePaths[0]
@@ -41,6 +47,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   ipcMain.handle('library:detect', (_e, sourcePath: string) => detectDump(sourcePath))
   ipcMain.handle('library:list', () => listGames())
+  ipcMain.handle('library:scan', () => scanLibrary())
   ipcMain.handle('game:launch', (_e, id: string) => launchGame(id))
   ipcMain.handle('game:remove', async (_e, id: string) => {
     await removeGame(id)
@@ -57,4 +64,18 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     })
     return { jobId }
   })
+
+  // First-run bootstrap + on-launch runtime updates. Checklist steps stream
+  // over bootstrap:step; the promise resolves with the final result.
+  ipcMain.handle('bootstrap:run', () => {
+    const win = getWindow()
+    return ensureRuntime((step) => win?.webContents.send('bootstrap:step', step))
+  })
+
+  ipcMain.handle('settings:get', () => ({
+    gamesDir: gamesRoot(),
+    runtimeRepo: runtimeRepo()
+  }))
+
+  ipcMain.handle('settings:setGamesDir', (_e, dir: string) => setGamesDir(dir))
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AppInfo, Game, InstallProgress } from '@shared/types'
+import type { AppInfo, Game, InstallProgress, LibraryScanResult } from '@shared/types'
 
 export type View = 'library' | 'settings'
 
@@ -11,13 +11,18 @@ interface LibraryState {
   selectedId: string | null
   view: View
   installOpen: boolean
+  /** False until the runtime bootstrap checklist finishes successfully. */
+  bootstrapped: boolean
 
   load: () => Promise<void>
   refreshInfo: () => Promise<void>
+  /** Re-read the library from disk, adopting installs missing from the index. */
+  scan: () => Promise<LibraryScanResult>
   select: (id: string | null) => void
   setView: (view: View) => void
   setInstallOpen: (open: boolean) => void
   setInstalling: (progress: InstallProgress | null) => void
+  setBootstrapped: (bootstrapped: boolean) => void
   launch: (id: string) => Promise<{ ok: boolean; error?: string }>
   remove: (id: string) => Promise<void>
 }
@@ -30,6 +35,7 @@ export const useLibrary = create<LibraryState>((set, get) => ({
   selectedId: null,
   view: 'library',
   installOpen: false,
+  bootstrapped: false,
 
   load: async () => {
     set({ loading: true })
@@ -42,10 +48,19 @@ export const useLibrary = create<LibraryState>((set, get) => ({
     set({ appInfo })
   },
 
+  scan: async () => {
+    // Deliberately does not flip `loading` — the grid stays visible while a
+    // scan runs; the button shows its own spinner.
+    const result = await window.api.scan()
+    set({ games: result.games })
+    return result
+  },
+
   select: (id) => set({ selectedId: id }),
   setView: (view) => set({ view, selectedId: null }),
   setInstallOpen: (installOpen) => set({ installOpen }),
   setInstalling: (installing) => set({ installing }),
+  setBootstrapped: (bootstrapped) => set({ bootstrapped }),
 
   launch: async (id) => {
     const result = await window.api.launch(id)

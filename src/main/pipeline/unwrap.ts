@@ -1,25 +1,24 @@
 import path from 'path'
 import { run } from './run'
 import { unwrapScriptPath } from '../paths'
-import { findPython } from '../python'
+import { pythonInvocation } from '../python'
 
 /**
  * Turn a decrypted SELF container into a clean ELF using AnyPS5's unwrap_self.py.
  * `output` may equal `input` to unwrap in place.
  */
 export async function unwrapSelf(input: string, output: string, verbose = false): Promise<void> {
-  const python = await findPython()
+  const python = await pythonInvocation()
   if (!python) {
     throw new Error(
-      'Python 3 was not found on this system. Install Python 3 (python.org) so the SELF unwrap step can run.'
+      'No Python 3 interpreter is available. NovaPS5 bundles one — repair or reinstall the app.'
     )
   }
 
-  const [cmd, ...prefix] = python.split(' ').filter(Boolean)
-  const args = [...prefix, unwrapScriptPath(), input, output]
+  const args = [...python.args, unwrapScriptPath(), input, output]
   if (verbose) args.push('--verbose')
 
-  const { code, stdout, stderr } = await run(cmd, args, { timeoutMs: 10 * 60 * 1000 })
+  const { code, stdout, stderr } = await run(python.cmd, args, { timeoutMs: 10 * 60 * 1000 })
 
   if (code !== 0) {
     const detail =
