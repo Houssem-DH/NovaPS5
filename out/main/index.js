@@ -2329,6 +2329,7 @@ function createWindow() {
     event.preventDefault();
     hideToTray();
   });
+  attachContextMenu(mainWindow);
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
@@ -2336,6 +2337,24 @@ function createWindow() {
   }
   mainWindow.on("closed", () => {
     mainWindow = null;
+  });
+}
+function attachContextMenu(window) {
+  window.webContents.on("context-menu", (_event, params) => {
+    const hasSelection = params.selectionText.trim().length > 0;
+    const items = [];
+    if (params.isEditable) {
+      items.push(
+        { role: "cut", label: "Cut", enabled: hasSelection },
+        { role: "copy", label: "Copy", enabled: hasSelection },
+        { role: "paste", label: "Paste" },
+        { type: "separator" },
+        { role: "selectAll", label: "Select all" }
+      );
+    } else if (hasSelection) {
+      items.push({ role: "copy", label: "Copy" }, { type: "separator" }, { role: "selectAll", label: "Select all" });
+    }
+    if (items.length) electron.Menu.buildFromTemplate(items).popup({ window });
   });
 }
 function createTray() {
@@ -2382,6 +2401,18 @@ function buildMenu() {
               electron.app.quit();
             }
           }
+        ]
+      },
+      {
+        label: "Edit",
+        submenu: [
+          { role: "undo" },
+          { role: "redo" },
+          { type: "separator" },
+          { role: "cut" },
+          { role: "copy" },
+          { role: "paste" },
+          { role: "selectAll" }
         ]
       },
       {

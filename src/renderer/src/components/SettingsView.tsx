@@ -291,12 +291,32 @@ export function SettingsView() {
       </Section>
 
       <Section title="About">
-        <div className="panel p-4 text-xs leading-relaxed text-muted-foreground">
+        <div className="panel space-y-3 p-4 text-xs leading-relaxed text-muted-foreground">
           <p>
-            NovaPS5 is built by <span className="text-foreground">Nova Crafted</span>. Each install unwraps the
-            game&apos;s SELF modules to ELF, runs the AnyPS5 relinker to build a Windows executable, arranges the{' '}
-            <code className="rounded bg-secondary px-1">app0/</code> runtime layout, then launches the game once to
-            verify it works. Conversion uses your local dump only — nothing is uploaded.
+            NovaPS5 is a library, converter and launcher built by{' '}
+            <span className="text-foreground">Nova Crafted</span>. It prepares each dump, drives the
+            conversion, arranges the <code className="rounded bg-secondary px-1">app0/</code> runtime layout,
+            then launches the game once to verify it works. Conversion uses your local dump only — nothing
+            is uploaded.
+          </p>
+          <p>
+            The conversion engine is{' '}
+            <a
+              href="https://github.com/boykopovar/AnyPS5"
+              onClick={(event) => {
+                event.preventDefault()
+                void window.api.openExternal('https://github.com/boykopovar/AnyPS5')
+              }}
+              className="text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary"
+            >
+              AnyPS5
+            </a>{' '}
+            by <span className="text-foreground">boykopovar</span>: the SELF/fSELF unwrapping, the ELF
+            relinking and the runtime libraries are its work, redistributed here under its license. Please
+            support the upstream project.
+          </p>
+          <p className="text-[11px] text-muted-foreground/80">
+            NovaPS5 v{appInfo?.appVersion ?? '…'} · GPL-2.0-or-later · includes AnyPS5 (GPL-2.0)
           </p>
         </div>
       </Section>

@@ -10520,33 +10520,9 @@ function NavItem({
 }
 function Sidebar() {
   const { view, setView, setInstallOpen, appInfo } = useLibrary();
-  const [logoOk, setLogoOk] = reactExports.useState(true);
   const toolsReady = !!appInfo && appInfo.relinkerPresent && appInfo.libsPresent && !!appInfo.pythonPath;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "relative flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-sm", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "px-5 pb-5 pt-6", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2.5", children: [
-        logoOk && /* @__PURE__ */ jsxRuntimeExports.jsx(
-          "img",
-          {
-            src: "icon.png",
-            alt: "",
-            draggable: false,
-            onError: () => setLogoOk(false),
-            className: "brand-glow h-9 w-9 shrink-0 select-none rounded-xl"
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "truncate text-xl font-semibold tracking-tight", children: [
-          "Nova",
-          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/80", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "h-1 w-1 rounded-full bg-primary" }),
-        "Powered by Nova Crafted"
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "gradient-line mx-4 h-px" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "flex flex-1 flex-col gap-1 p-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "flex flex-1 flex-col gap-1 p-3 pt-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(NavItem, { icon: Library, label: "Library", active: view === "library", onClick: () => setView("library") }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(NavItem, { icon: Settings, label: "Settings", active: view === "settings", onClick: () => setView("settings") })
     ] }),
@@ -18314,14 +18290,41 @@ function SettingsView() {
         }
       ) })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(Section, { title: "About", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "panel p-4 text-xs leading-relaxed text-muted-foreground", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
-      "NovaPS5 is built by ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-foreground", children: "Nova Crafted" }),
-      ". Each install unwraps the game's SELF modules to ELF, runs the AnyPS5 relinker to build a Windows executable, arranges the",
-      " ",
-      /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "rounded bg-secondary px-1", children: "app0/" }),
-      " runtime layout, then launches the game once to verify it works. Conversion uses your local dump only — nothing is uploaded."
-    ] }) }) })
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Section, { title: "About", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel space-y-3 p-4 text-xs leading-relaxed text-muted-foreground", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+        "NovaPS5 is a library, converter and launcher built by",
+        " ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-foreground", children: "Nova Crafted" }),
+        ". It prepares each dump, drives the conversion, arranges the ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "rounded bg-secondary px-1", children: "app0/" }),
+        " runtime layout, then launches the game once to verify it works. Conversion uses your local dump only — nothing is uploaded."
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
+        "The conversion engine is",
+        " ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "a",
+          {
+            href: "https://github.com/boykopovar/AnyPS5",
+            onClick: (event) => {
+              event.preventDefault();
+              void window.api.openExternal("https://github.com/boykopovar/AnyPS5");
+            },
+            className: "text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary",
+            children: "AnyPS5"
+          }
+        ),
+        " ",
+        "by ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-foreground", children: "boykopovar" }),
+        ": the SELF/fSELF unwrapping, the ELF relinking and the runtime libraries are its work, redistributed here under its license. Please support the upstream project."
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-[11px] text-muted-foreground/80", children: [
+        "NovaPS5 v",
+        appInfo?.appVersion ?? "…",
+        " · GPL-2.0-or-later · includes AnyPS5 (GPL-2.0)"
+      ] })
+    ] }) })
   ] });
 }
 var __defProp$c = Object.defineProperty;

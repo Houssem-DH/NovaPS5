@@ -54,8 +54,27 @@
     @apply bg-background text-foreground antialiased;
     font-feature-settings: 'cv02', 'cv03', 'cv04';
     overflow: hidden;
-    user-select: none;
     cursor: default;
+  }
+
+  /* Whatever you can read, you can copy: paths, error text, release notes,
+     log lines. Controls keep their app feel and stay unselectable, so dragging
+     on a button or a nav item never selects its label. */
+  main,
+  aside,
+  [role='dialog'],
+  [data-selectable],
+  input,
+  textarea {
+    user-select: text;
+  }
+
+  button,
+  [role='button'],
+  nav,
+  label,
+  summary {
+    user-select: none;
   }
 
   ::selection {
@@ -70,6 +89,7 @@
      everything interactive inside it stays clickable. */
   .drag-region {
     -webkit-app-region: drag;
+    user-select: none;
   }
   .drag-region button,
   .drag-region input,

@@ -553,11 +553,32 @@ video {
   -moz-osx-font-smoothing: grayscale;
     font-feature-settings: 'cv02', 'cv03', 'cv04';
     overflow: hidden;
+    cursor: default;
+}
+
+  /* Whatever you can read, you can copy: paths, error text, release notes,
+     log lines. Controls keep their app feel and stay unselectable, so dragging
+     on a button or a nav item never selects its label. */
+  main,
+  aside,
+  [role='dialog'],
+  [data-selectable],
+  input,
+  textarea {
+    -webkit-user-select: text;
+       -moz-user-select: text;
+            user-select: text;
+  }
+
+  button,
+  [role='button'],
+  nav,
+  label,
+  summary {
     -webkit-user-select: none;
        -moz-user-select: none;
             user-select: none;
-    cursor: default;
-}
+  }
 
   ::-moz-selection {
   background-color: hsl(var(--primary) / 0.3);
@@ -582,6 +603,9 @@ video {
      everything interactive inside it stays clickable. */
   .drag-region {
     -webkit-app-region: drag;
+    -webkit-user-select: none;
+       -moz-user-select: none;
+            user-select: none;
   }
   .drag-region button,
   .drag-region input,
@@ -702,10 +726,6 @@ video {
 }
 .z-50 {
   z-index: 50;
-}
-.mx-4 {
-  margin-left: 1rem;
-  margin-right: 1rem;
 }
 .mx-auto {
   margin-left: auto;
@@ -1411,10 +1431,6 @@ video {
   padding-left: 1rem;
   padding-right: 1rem;
 }
-.px-5 {
-  padding-left: 1.25rem;
-  padding-right: 1.25rem;
-}
 .px-7 {
   padding-left: 1.75rem;
   padding-right: 1.75rem;
@@ -1451,9 +1467,6 @@ video {
   padding-top: 2rem;
   padding-bottom: 2rem;
 }
-.pb-5 {
-  padding-bottom: 1.25rem;
-}
 .pl-0 {
   padding-left: 0px;
 }
@@ -1466,8 +1479,8 @@ video {
 .pt-0 {
   padding-top: 0px;
 }
-.pt-6 {
-  padding-top: 1.5rem;
+.pt-4 {
+  padding-top: 1rem;
 }
 .text-left {
   text-align: left;

@@ -95,6 +95,8 @@ function createWindow(): void {
     hideToTray()
   })
 
+  attachContextMenu(mainWindow)
+
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -103,6 +105,32 @@ function createWindow(): void {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+  })
+}
+
+/**
+ * Right-click menu for text: copy a selection, paste into a field, or select the
+ * whole page. Without this a frameless Electron window has no context menu at
+ * all, which makes error messages and file paths impossible to copy out.
+ */
+function attachContextMenu(window: BrowserWindow): void {
+  window.webContents.on('context-menu', (_event, params) => {
+    const hasSelection = params.selectionText.trim().length > 0
+    const items: Electron.MenuItemConstructorOptions[] = []
+
+    if (params.isEditable) {
+      items.push(
+        { role: 'cut', label: 'Cut', enabled: hasSelection },
+        { role: 'copy', label: 'Copy', enabled: hasSelection },
+        { role: 'paste', label: 'Paste' },
+        { type: 'separator' },
+        { role: 'selectAll', label: 'Select all' }
+      )
+    } else if (hasSelection) {
+      items.push({ role: 'copy', label: 'Copy' }, { type: 'separator' }, { role: 'selectAll', label: 'Select all' })
+    }
+
+    if (items.length) Menu.buildFromTemplate(items).popup({ window })
   })
 }
 
@@ -151,6 +179,18 @@ function buildMenu(): void {
               app.quit()
             }
           }
+        ]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' }
         ]
       },
       {
