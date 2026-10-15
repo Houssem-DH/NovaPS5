@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, FileArchive, Package, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react'
+import {
+  FolderOpen,
+  FileArchive,
+  Package,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle
+} from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -174,15 +182,59 @@ export function InstallDialog() {
               </div>
             )}
 
+            {detect?.isDump && detect.checks && (
+              <div className="space-y-2 rounded-xl border border-border/60 bg-card/50 p-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Compatibility</span>
+                  <span
+                    className={
+                      detect.compatible
+                        ? 'rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300'
+                        : 'rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300'
+                    }
+                  >
+                    {detect.compatible ? 'Ready to convert' : 'Issues found'}
+                  </span>
+                </div>
+                <ul className="space-y-1.5">
+                  {detect.checks.map((check) => (
+                    <li key={check.id} className="flex items-start gap-2 text-xs">
+                      {check.status === 'pass' ? (
+                        <CheckCircle2 className="mt-px h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                      ) : check.status === 'warn' ? (
+                        <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-400" />
+                      ) : (
+                        <XCircle className="mt-px h-3.5 w-3.5 shrink-0 text-red-400" />
+                      )}
+                      <span className="min-w-0">
+                        <span className="font-medium">{check.label}</span>{' '}
+                        <span className="text-muted-foreground">{check.detail}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {source && (
               <p className="truncate text-xs text-muted-foreground" title={source}>
                 {source}
               </p>
             )}
 
-            <Button className="w-full" size="lg" disabled={!detect?.isDump || scanning} onClick={start}>
+            <Button
+              className="w-full"
+              size="lg"
+              disabled={!detect?.isDump || scanning || detect?.compatible === false}
+              onClick={start}
+            >
               <Package className="h-4 w-4" /> Install
             </Button>
+            {detect?.isDump && detect.compatible === false && (
+              <p className="text-center text-xs text-red-300">
+                Fix the issues above, then select the dump again.
+              </p>
+            )}
           </div>
         )}
       </DialogContent>

@@ -20482,11 +20482,41 @@ function InstallDialog() {
           /* @__PURE__ */ jsxRuntimeExports.jsx(Input, { value: name, onChange: (e) => setName(e.target.value), placeholder: detect.name })
         ] })
       ] }),
+      detect?.isDump && detect.checks && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2 rounded-xl border border-border/60 bg-card/50 p-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-medium", children: "Compatibility" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "span",
+            {
+              className: detect.compatible ? "rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300" : "rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300",
+              children: detect.compatible ? "Ready to convert" : "Issues found"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "space-y-1.5", children: detect.checks.map((check) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "flex items-start gap-2 text-xs", children: [
+          check.status === "pass" ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "mt-px h-3.5 w-3.5 shrink-0 text-emerald-400" }) : check.status === "warn" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-px h-3.5 w-3.5 shrink-0 text-amber-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "mt-px h-3.5 w-3.5 shrink-0 text-red-400" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium", children: check.label }),
+            " ",
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: check.detail })
+          ] })
+        ] }, check.id)) })
+      ] }),
       source && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-xs text-muted-foreground", title: source, children: source }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { className: "w-full", size: "lg", disabled: !detect?.isDump || scanning, onClick: start, children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Package, { className: "h-4 w-4" }),
-        " Install"
-      ] })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        Button,
+        {
+          className: "w-full",
+          size: "lg",
+          disabled: !detect?.isDump || scanning || detect?.compatible === false,
+          onClick: start,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Package, { className: "h-4 w-4" }),
+            " Install"
+          ]
+        }
+      ),
+      detect?.isDump && detect.compatible === false && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-center text-xs text-red-300", children: "Fix the issues above, then select the dump again." })
     ] })
   ] }) });
 }

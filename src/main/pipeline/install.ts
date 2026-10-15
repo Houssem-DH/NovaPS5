@@ -8,6 +8,7 @@ import { relink } from './relink'
 import { copyDir, dirSize } from './copy'
 import { buildLayout } from './layout'
 import { resolveSource, readMeta } from './dump'
+import { checkCompatibility, formatBlockers, isBackupName } from './compat'
 import { addGame, getGame, slugify } from '../library'
 import type { Game, InstallProgress, InstallStep } from '@shared/types'
 
@@ -57,6 +58,12 @@ export async function installGame(
     if (!fs.existsSync(path.join(dumpRoot, 'eboot.bin'))) {
       throw new Error('No eboot.bin found — this does not look like a PS5 game dump.')
     }
+
+    // ---- Compatibility test: fail fast with a clear report, before any copy
+    emit('Checking compatibility…', 4, 'validating')
+    const compat = await checkCompatibility(dumpRoot)
+    const blockers = formatBlockers(compat)
+    if (blockers) throw new Error(`Not compatible — ${blockers}`)
 
     const meta = await readMeta(dumpRoot)
     const name = (nameOverride?.trim() || meta.name).slice(0, 90)
@@ -173,10 +180,26 @@ export async function installGame(
       }
       if (hasPrx && rel) {
         prxDirs.push(rel)
-        if (rel !== 'sce_module') moduleDirs.push(rel)
+        // The relinker auto-scans sce_module/sce_modules/prx itself — passing
+        // those again as --module-dir is a duplicate-directory error.
+        if (rel !== 'sce_module' && rel !== 'sce_modules' && rel !== 'prx') moduleDirs.push(rel)
       }
     }
     await scanForModules(installDir, '', 0)
+
+    // Backup leftovers sit inside module folders — exactly where the relinker
+    // scans content-first (any ELF magic counts, extension ignored). A backup
+    // copy of a module re-registers the same SONAME and aborts the conversion
+    // with "Ambiguous guest dependency name". Pruned from the staging copy
+    // only; the source dump is never modified.
+    for (const rel of prxDirs) {
+      const dir = path.join(installDir, rel)
+      for (const file of await fsp.readdir(dir)) {
+        if (isBackupName(file)) {
+          await fsp.rm(path.join(dir, file), { force: true })
+        }
+      }
+    }
     for (const rel of prxDirs) {
       const dir = path.join(installDir, rel)
       for (const file of await fsp.readdir(dir)) {

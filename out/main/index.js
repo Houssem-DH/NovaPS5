@@ -181,7 +181,7 @@ async function launchGame(id) {
   }
 }
 const SELF_MAGIC = Buffer.from([79, 21, 61, 29]);
-const ELF_MAGIC = Buffer.from([127, 69, 76, 70]);
+const ELF_MAGIC$1 = Buffer.from([127, 69, 76, 70]);
 const PE_MAGIC = Buffer.from([77, 90]);
 function detectContainer(file) {
   let fd;
@@ -190,7 +190,7 @@ function detectContainer(file) {
     const buf = Buffer.alloc(4);
     const read = fs.readSync(fd, buf, 0, 4, 0);
     if (read < 2) return "unknown";
-    if (buf.subarray(0, 4).equals(ELF_MAGIC)) return "elf";
+    if (buf.subarray(0, 4).equals(ELF_MAGIC$1)) return "elf";
     if (buf.subarray(0, 4).equals(SELF_MAGIC)) return "self";
     if (buf.subarray(0, 2).equals(PE_MAGIC)) return "pe";
     return "unknown";
@@ -294,6 +294,39 @@ async function unwrapSelf(input, output, verbose = false) {
     throw new Error(`Unwrap failed — ${detail}`);
   }
 }
+function explainRelinkFailure(detail) {
+  const rules = [
+    [
+      /^Ambiguous guest dependency name: (.+)$/i,
+      (m) => `Two module files claim the name "${m[1]}" — usually a leftover backup copy (like *.bak) inside a module folder. Remove the duplicate file from the dump and retry.`
+    ],
+    [
+      /^Conflicting guest output filename: (.+)$/i,
+      (m) => `Two modules would be written out as "${m[1]}" — remove one of the duplicate module files from the dump.`
+    ],
+    [
+      /^Ambiguous guest module identity: (.+)$/i,
+      (m) => `Several modules identify as "${m[1]}" — remove the duplicate copies from the dump.`
+    ],
+    [
+      /^Both sce_module and sce_modules exist/i,
+      () => "The dump has both sce_module/ and sce_modules/ — keep only one of them."
+    ],
+    [
+      /^Guest module parent directory does not exist/i,
+      () => "No sce_module/ folder was found — this dump ships no loadable modules for the converter."
+    ],
+    [
+      /^Excluded guest module file not found/i,
+      () => "The dump layout changed mid-conversion — retry the installation."
+    ]
+  ];
+  for (const [pattern, describe] of rules) {
+    const match = detail.match(pattern);
+    if (match) return describe(match);
+  }
+  return detail;
+}
 async function relink(inputElf, outputExe, onOutput, cwd, moduleDirs = []) {
   const args = ["--windows"];
   for (const dir of moduleDirs) args.push("--module-dir", dir);
@@ -306,7 +339,7 @@ async function relink(inputElf, outputExe, onOutput, cwd, moduleDirs = []) {
   if (code !== 0) {
     const detail = extractFailure(`${stderr}
 ${stdout}`) ?? `relinker exited with code ${code}`;
-    throw new Error(`Conversion failed — ${detail}`);
+    throw new Error(`Conversion failed — ${explainRelinkFailure(detail)}`);
   }
   return { stdout, stderr };
 }
@@ -394,6 +427,238 @@ async function mergeDirs(src, dest) {
     }
   }
   await fs.promises.rmdir(src);
+}
+const ELF_MAGIC = Buffer.from([127, 69, 76, 70]);
+const SELF_MAGICS = [
+  Buffer.from([79, 21, 61, 29]),
+  Buffer.from([84, 20, 245, 238])
+];
+function isBackupName(name) {
+  return /\.(bak|backup|old|orig)([._-].*)?$/i.test(name) || name.endsWith("~");
+}
+async function fileMagic(file) {
+  let handle = null;
+  try {
+    handle = await fs.promises.open(file, "r");
+    const buf = Buffer.alloc(4);
+    const { bytesRead } = await handle.read(buf, 0, 4, 0);
+    if (bytesRead < 4) return "other";
+    if (buf.equals(ELF_MAGIC)) return "elf";
+    if (SELF_MAGICS.some((magic) => buf.equals(magic))) return "self";
+    return "other";
+  } catch {
+    return "other";
+  } finally {
+    if (handle) await handle.close().catch(() => {
+    });
+  }
+}
+async function walkModuleDirs(root) {
+  const dirs = [];
+  const visit = async (full, rel, depth) => {
+    if (depth > 4) return;
+    let entries;
+    try {
+      entries = await fs.promises.readdir(full, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    let hasPrx = false;
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (entry.name === "sce_sys") continue;
+        await visit(path.join(full, entry.name), rel ? `${rel}/${entry.name}` : entry.name, depth + 1);
+      } else if (entry.name.endsWith(".prx") && !entry.name.endsWith(".guest.prx")) {
+        hasPrx = true;
+      }
+    }
+    if (hasPrx && rel) dirs.push(rel);
+  };
+  await visit(root, "", 0);
+  return dirs;
+}
+async function checkCompatibility(root) {
+  const checks = [];
+  const eboot = path.join(root, "eboot.bin");
+  const kind = fs.existsSync(eboot) ? detectContainer(eboot) : "missing";
+  if (kind === "elf") {
+    checks.push({
+      id: "eboot",
+      label: "Executable",
+      status: "pass",
+      detail: "eboot.bin is a plain ELF — no unwrap needed."
+    });
+  } else if (kind === "self") {
+    checks.push({
+      id: "eboot",
+      label: "Executable",
+      status: "pass",
+      detail: "eboot.bin is a PS5 SELF container — unwraps automatically."
+    });
+  } else if (kind === "missing") {
+    checks.push({
+      id: "eboot",
+      label: "Executable",
+      status: "fail",
+      detail: "eboot.bin not found — this folder is not a complete dump."
+    });
+  } else {
+    checks.push({
+      id: "eboot",
+      label: "Executable",
+      status: "fail",
+      detail: "eboot.bin is not a recognized ELF or SELF file — the dump looks corrupted or still encrypted."
+    });
+  }
+  if (kind === "self") {
+    const python = await findPython();
+    checks.push(
+      python ? {
+        id: "python",
+        label: "Python",
+        status: "pass",
+        detail: "Python 3 available for the SELF unwrap step."
+      } : {
+        id: "python",
+        label: "Python",
+        status: "fail",
+        detail: "Python 3 is required to unwrap SELF containers — install it from python.org."
+      }
+    );
+  }
+  const tools = toolingPresent();
+  checks.push(
+    tools.relinker && tools.libs && tools.unwrap ? {
+      id: "runtime",
+      label: "Runtime",
+      status: "pass",
+      detail: "Conversion runtime is installed and ready."
+    } : {
+      id: "runtime",
+      label: "Runtime",
+      status: "fail",
+      detail: "Conversion runtime is incomplete — restart NovaPS5 to download it."
+    }
+  );
+  const hasSingular = fs.existsSync(path.join(root, "sce_module"));
+  const hasPlural = fs.existsSync(path.join(root, "sce_modules"));
+  const hasPrxDir = fs.existsSync(path.join(root, "prx"));
+  const moduleIssues = [];
+  let moduleCount = 0;
+  if (hasSingular && hasPlural) {
+    moduleIssues.push({
+      id: "modules-both",
+      label: "Modules",
+      status: "fail",
+      detail: "The dump has both sce_module/ and sce_modules/ — keep only one of them."
+    });
+  } else if (!hasSingular && !hasPlural && !hasPrxDir) {
+    moduleIssues.push({
+      id: "modules-none",
+      label: "Modules",
+      status: "fail",
+      detail: "No sce_module/ folder — this dump ships no loadable modules for the converter."
+    });
+  } else {
+    const rootDirs = [
+      hasSingular ? "sce_module" : null,
+      hasPlural ? "sce_modules" : null,
+      hasPrxDir ? "prx" : null
+    ].filter((dir) => dir !== null);
+    const extraDirs = (await walkModuleDirs(root)).filter((dir) => !rootDirs.includes(dir));
+    const dirs = [...rootDirs, ...extraDirs];
+    const files = [];
+    for (const rel of dirs) {
+      let entries;
+      try {
+        entries = await fs.promises.readdir(path.join(root, rel), { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        if (entry.name.endsWith(".guest.prx")) continue;
+        const magic = await fileMagic(path.join(root, rel, entry.name));
+        if (magic === "other") continue;
+        files.push({ rel, name: entry.name, magic });
+      }
+    }
+    const byName = /* @__PURE__ */ new Map();
+    for (const file of files) {
+      const folded = file.name.toLowerCase();
+      const bucket = byName.get(folded);
+      if (bucket) bucket.push(file);
+      else byName.set(folded, [file]);
+    }
+    for (const [, bucket] of byName) {
+      if (bucket.length < 2) continue;
+      const locations = [...new Set(bucket.map((f) => `${f.rel}/${f.name}`))].join(" and ");
+      moduleIssues.push({
+        id: `modules-dup-${bucket[0].name.toLowerCase()}`,
+        label: "Modules",
+        status: "fail",
+        detail: `Duplicate module "${bucket[0].name}" found at ${locations} — remove one copy so the converter can tell them apart.`
+      });
+    }
+    const backups = files.filter((file) => isBackupName(file.name) || file.name.endsWith(".esbak"));
+    if (backups.length > 0) {
+      const shown = backups.slice(0, 3).map((f) => `${f.rel}/${f.name}`).join(", ");
+      const more = backups.length > 3 ? ` (+${backups.length - 3} more)` : "";
+      moduleIssues.push({
+        id: "modules-backups",
+        label: "Modules",
+        status: "warn",
+        detail: `Backup leftovers will be skipped during conversion: ${shown}${more}.`
+      });
+    }
+    const strays = files.filter(
+      (file) => !file.name.endsWith(".prx") && !isBackupName(file.name) && !file.name.endsWith(".esbak")
+    );
+    if (strays.length > 0) {
+      const shown = strays.slice(0, 3).map((f) => `${f.rel}/${f.name}`).join(", ");
+      const more = strays.length > 3 ? ` (+${strays.length - 3} more)` : "";
+      moduleIssues.push({
+        id: "modules-strays",
+        label: "Modules",
+        status: "warn",
+        detail: `Module-like files without a .prx name will still be converted: ${shown}${more}.`
+      });
+    }
+    moduleCount = files.length - backups.length;
+  }
+  if (moduleIssues.some((check) => check.status === "fail")) {
+    checks.push(...moduleIssues.filter((check) => check.status === "fail"));
+  } else {
+    checks.push(
+      ...moduleIssues,
+      {
+        id: "modules",
+        label: "Modules",
+        status: "pass",
+        detail: `${moduleCount} loadable module${moduleCount === 1 ? "" : "s"} found — folders are consistent.`
+      }
+    );
+  }
+  const meta = await readMeta(root);
+  checks.push(
+    meta.titleId ? {
+      id: "meta",
+      label: "Metadata",
+      status: "pass",
+      detail: `Title detected: ${meta.name} (${meta.titleId}).`
+    } : {
+      id: "meta",
+      label: "Metadata",
+      status: "warn",
+      detail: "Title metadata unreadable — the folder name will be used."
+    }
+  );
+  return { checks, compatible: checks.every((check) => check.status !== "fail") };
+}
+function formatBlockers(report) {
+  const blockers = report.checks.filter((check) => check.status === "fail");
+  if (blockers.length === 0) return null;
+  return blockers.map((check) => `${check.label}: ${check.detail}`).join(" ");
 }
 function looksLikeDump(dir) {
   return fs.existsSync(path.join(dir, "eboot.bin")) || fs.existsSync(path.join(dir, "sce_sys"));
@@ -502,7 +767,16 @@ async function detectDump(sourcePath) {
       if (entry.name.endsWith(".esbak")) continue;
       sizeBytes += await dirSize(path.join(root, entry.name));
     }
-    return { isDump: true, name: meta.name, titleId: meta.titleId, hasCover: meta.hasCover, sizeBytes };
+    const compat = await checkCompatibility(root);
+    return {
+      isDump: true,
+      name: meta.name,
+      titleId: meta.titleId,
+      hasCover: meta.hasCover,
+      sizeBytes,
+      checks: compat.checks,
+      compatible: compat.compatible
+    };
   } catch (error) {
     return { isDump: false, reason: error instanceof Error ? error.message : String(error) };
   } finally {
@@ -532,6 +806,10 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     if (!fs.existsSync(path.join(dumpRoot, "eboot.bin"))) {
       throw new Error("No eboot.bin found — this does not look like a PS5 game dump.");
     }
+    emit("Checking compatibility…", 4, "validating");
+    const compat = await checkCompatibility(dumpRoot);
+    const blockers = formatBlockers(compat);
+    if (blockers) throw new Error(`Not compatible — ${blockers}`);
     const meta = await readMeta(dumpRoot);
     const name = (nameOverride?.trim() || meta.name).slice(0, 90);
     const baseId = slugify(name);
@@ -621,10 +899,18 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       }
       if (hasPrx && rel) {
         prxDirs.push(rel);
-        if (rel !== "sce_module") moduleDirs.push(rel);
+        if (rel !== "sce_module" && rel !== "sce_modules" && rel !== "prx") moduleDirs.push(rel);
       }
     };
     await scanForModules(installDir, "", 0);
+    for (const rel of prxDirs) {
+      const dir = path.join(installDir, rel);
+      for (const file of await fs.promises.readdir(dir)) {
+        if (isBackupName(file)) {
+          await fs.promises.rm(path.join(dir, file), { force: true });
+        }
+      }
+    }
     for (const rel of prxDirs) {
       const dir = path.join(installDir, rel);
       for (const file of await fs.promises.readdir(dir)) {

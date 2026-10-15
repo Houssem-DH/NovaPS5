@@ -59,6 +59,19 @@ export interface ImportRequest {
   name?: string
 }
 
+// ---- Compatibility ----------------------------------------------------------
+
+export type CompatStatus = 'pass' | 'warn' | 'fail'
+
+export interface CompatCheck {
+  id: string
+  /** Short display name, e.g. "Executable", "Modules". */
+  label: string
+  status: CompatStatus
+  /** One-line human explanation. */
+  detail: string
+}
+
 export interface DetectResult {
   isDump: boolean
   /** Set when isDump is true. */
@@ -68,6 +81,10 @@ export interface DetectResult {
   /** Estimated content size in bytes (data + sce_sys + eboot), best-effort. */
   sizeBytes?: number
   reason?: string
+  /** Compatibility report — present when isDump is true. */
+  checks?: CompatCheck[]
+  /** True when no check failed; installation should stay disabled otherwise. */
+  compatible?: boolean
 }
 
 export interface Settings {
