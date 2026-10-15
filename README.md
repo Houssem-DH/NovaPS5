@@ -88,6 +88,8 @@ The app updates itself from this repository's **GitHub Releases** (see `build.pu
 4. Write the **release notes in Markdown** — headings, lists, `**bold**`, `` `code` ``, quotes and links
    are all rendered in the in-app What's new dialog. GitHub stores the body as Markdown and the updater
    reads it back already rendered as HTML, so both are handled; a plain-text body is treated as Markdown.
+   Notes are kept with the code under `docs/releases/` (see `docs/releases/v0.1.0.md`) so the body can be
+   pasted straight into the release.
 
    ```markdown
    ## Highlights
