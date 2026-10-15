@@ -7192,6 +7192,9 @@ const useLibrary = create((set, get) => ({
   view: "library",
   installOpen: false,
   bootstrapped: false,
+  update: null,
+  whatsNew: null,
+  updateOpen: false,
   load: async () => {
     set({ loading: true });
     const games = await window.api.list();
@@ -7228,6 +7231,23 @@ const useLibrary = create((set, get) => ({
       view: state.selectedId === id2 ? "library" : state.view
     }));
     void get();
+  },
+  setUpdate: (update) => set({ update }),
+  setUpdateOpen: (updateOpen) => set({ updateOpen }),
+  checkUpdates: async () => {
+    const update = await window.api.checkForUpdates();
+    set({ update });
+  },
+  installUpdate: async () => {
+    await window.api.installUpdate();
+  },
+  checkWhatsNew: async () => {
+    const whatsNew = await window.api.whatsNew();
+    if (whatsNew) set({ whatsNew });
+  },
+  dismissWhatsNew: async () => {
+    await window.api.dismissWhatsNew();
+    set({ whatsNew: null });
   }
 }));
 function selectedGame() {
@@ -7324,6 +7344,16 @@ const createLucideIcon = (iconName, iconNode) => {
 const ArrowLeft = createLucideIcon("ArrowLeft", [
   ["path", { d: "m12 19-7-7 7-7", key: "1l729n" }],
   ["path", { d: "M19 12H5", key: "x3x0zl" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const ArrowUpRight = createLucideIcon("ArrowUpRight", [
+  ["path", { d: "M7 7h10v10", key: "1tivn9" }],
+  ["path", { d: "M7 17 17 7", key: "1vkiza" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -7445,6 +7475,22 @@ const Gamepad2 = createLucideIcon("Gamepad2", [
       key: "mfqc10"
     }
   ]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Github = createLucideIcon("Github", [
+  [
+    "path",
+    {
+      d: "M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4",
+      key: "tonef"
+    }
+  ],
+  ["path", { d: "M9 18c-4.51 2-5-2-7-2", key: "9comsn" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -7622,6 +7668,25 @@ const ShieldCheck = createLucideIcon("ShieldCheck", [
     }
   ],
   ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Sparkles = createLucideIcon("Sparkles", [
+  [
+    "path",
+    {
+      d: "M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z",
+      key: "4pj2yx"
+    }
+  ],
+  ["path", { d: "M20 3v4", key: "1olli1" }],
+  ["path", { d: "M22 5h-4", key: "1gvqau" }],
+  ["path", { d: "M4 17v2", key: "vumght" }],
+  ["path", { d: "M5 18H3", key: "zchphs" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -18083,7 +18148,7 @@ function Pill({ tone, children }) {
   );
 }
 function SettingsView() {
-  const { appInfo, refreshInfo } = useLibrary();
+  const { appInfo, refreshInfo, update, checkUpdates, setUpdateOpen } = useLibrary();
   const [checking, setChecking] = reactExports.useState(false);
   const [updating, setUpdating] = reactExports.useState(false);
   const [moving, setMoving] = reactExports.useState(false);
@@ -18218,8 +18283,42 @@ function SettingsView() {
         }
       )
     ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(Section, { title: "Application updates", description: "NovaPS5 keeps itself current from its GitHub releases.", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Row,
+        {
+          icon: Sparkles,
+          label: "NovaPS5",
+          value: appInfo ? `v${appInfo.appVersion}` : "…",
+          badge: update?.status === "current" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: /no updates published/i.test(update.message ?? "") ? "muted" : "ok", children: update.message ?? "Up to date" }) : update?.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: "warn", children: "Check failed" }) : update?.version ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { tone: "warn", children: [
+            "v",
+            update.version,
+            " available"
+          ] }) : void 0
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { icon: Github, label: "Updates from", value: `github.com/${appInfo?.appRepo ?? "Houssem-DH/NovaPS5"}` }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-4 py-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        Button,
+        {
+          variant: "secondary",
+          size: "sm",
+          onClick: () => {
+            setUpdateOpen(true);
+            void checkUpdates();
+          },
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-3.5 w-3.5" }),
+            " Check for updates"
+          ]
+        }
+      ) })
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(Section, { title: "About", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "panel p-4 text-xs leading-relaxed text-muted-foreground", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
-      "Each install unwraps the game's SELF modules to ELF, runs the AnyPS5 relinker to build a Windows executable, arranges the ",
+      "NovaPS5 is built by ",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-foreground", children: "Nova Crafted" }),
+      ". Each install unwraps the game's SELF modules to ELF, runs the AnyPS5 relinker to build a Windows executable, arranges the",
+      " ",
       /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "rounded bg-secondary px-1", children: "app0/" }),
       " runtime layout, then launches the game once to verify it works. Conversion uses your local dump only — nothing is uploaded."
     ] }) }) })
@@ -20450,6 +20549,9 @@ DialogContent.displayName = DialogContent$1.displayName;
 function DialogHeader({ className, ...props }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: cn("flex flex-col space-y-1.5 text-left", className), ...props });
 }
+function DialogFooter({ className, ...props }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className), ...props });
+}
 const DialogTitle = reactExports.forwardRef(({ className, ...props }, ref) => /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle$1, { ref, className: cn("text-lg font-semibold leading-none tracking-tight", className), ...props }));
 DialogTitle.displayName = DialogTitle$1.displayName;
 const DialogDescription = reactExports.forwardRef(({ className, ...props }, ref) => /* @__PURE__ */ jsxRuntimeExports.jsx(DialogDescription$1, { ref, className: cn("text-sm text-muted-foreground", className), ...props }));
@@ -20746,6 +20848,447 @@ function InstallDialog() {
     ] })
   ] }) });
 }
+function UpdateButton() {
+  const { update, checkUpdates, setUpdateOpen } = useLibrary();
+  const status = update?.status ?? "idle";
+  const percent2 = update?.percent ?? 0;
+  const version = update?.version;
+  const busy = status === "checking" || status === "downloading" || status === "installing";
+  const hasUpdate = status === "available" || status === "downloading" || status === "ready" || status === "installing";
+  const view = (() => {
+    switch (status) {
+      case "checking":
+        return { icon: LoaderCircle, label: "Checking for updates…", tone: "text-muted-foreground" };
+      case "current":
+        return { icon: CircleCheck, label: update?.message ?? "Up to date", tone: "text-emerald-400" };
+      case "available":
+        return { icon: Sparkles, label: `v${version} available`, tone: "text-primary" };
+      case "downloading":
+        return { icon: Download, label: `Downloading ${percent2}%`, tone: "text-primary" };
+      case "ready":
+        return { icon: Download, label: `v${version} ready`, tone: "text-primary" };
+      case "installing":
+        return { icon: LoaderCircle, label: "Restarting to update…", tone: "text-primary" };
+      case "error":
+        return { icon: TriangleAlert, label: update?.message ?? "Update check failed", tone: "text-amber-400" };
+      default:
+        return { icon: RefreshCw, label: "Check for updates", tone: "text-muted-foreground" };
+    }
+  })();
+  const Icon2 = view.icon;
+  const onClick = async () => {
+    if (hasUpdate || busy) {
+      setUpdateOpen(true);
+      return;
+    }
+    await checkUpdates();
+    const next = useLibrary.getState().update;
+    if (next?.version && (next.status === "available" || next.status === "downloading" || next.status === "ready")) {
+      setUpdateOpen(true);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "button",
+    {
+      type: "button",
+      onClick: () => void onClick(),
+      title: update?.detail ?? view.label,
+      className: cn(
+        "relative flex h-7 shrink-0 items-center gap-1.5 overflow-hidden rounded-full border border-border/60 bg-card/70 px-2.5",
+        "text-[11px] font-medium transition-colors hover:border-border hover:bg-accent/70",
+        view.tone
+      ),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: cn("h-3.5 w-3.5", status === "checking" || status === "installing" ? "animate-spin" : "") }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden whitespace-nowrap sm:inline", children: view.label }),
+        (status === "downloading" || status === "ready") && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "absolute inset-x-1.5 bottom-[3px] h-[2px] overflow-hidden rounded-full bg-primary/20", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "span",
+          {
+            className: "block h-full rounded-full bg-primary transition-all duration-300",
+            style: { width: `${status === "ready" ? 100 : percent2}%` }
+          }
+        ) })
+      ]
+    }
+  );
+}
+const VOID_TAGS = /* @__PURE__ */ new Set(["br", "hr"]);
+const DROPPED_TAGS = /* @__PURE__ */ new Set(["script", "style", "iframe", "object", "embed", "svg", "img", "video", "audio"]);
+const ENTITIES = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  rsquo: "’",
+  lsquo: "‘",
+  ldquo: "“",
+  rdquo: "”",
+  times: "×",
+  check: "✓"
+};
+function decodeEntities(text) {
+  return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity) => {
+    if (entity.startsWith("#x") || entity.startsWith("#X")) {
+      const code = Number.parseInt(entity.slice(2), 16);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+    }
+    if (entity.startsWith("#")) {
+      const code = Number.parseInt(entity.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+    }
+    return ENTITIES[entity.toLowerCase()] ?? match;
+  });
+}
+function parseHtml(html) {
+  const root = { tag: null, children: [] };
+  const stack = [root];
+  const tagPattern = /<\/?([a-z][a-z0-9]*)((?:"[^"]*"|'[^']*'|[^>])*)\/?>/gi;
+  let cursor = 0;
+  let match;
+  const addText = (value) => {
+    if (!value) return;
+    stack[stack.length - 1].children.push({ tag: null, text: decodeEntities(value), children: [] });
+  };
+  while ((match = tagPattern.exec(html)) !== null) {
+    addText(html.slice(cursor, match.index));
+    cursor = tagPattern.lastIndex;
+    const tag = match[1].toLowerCase();
+    if (DROPPED_TAGS.has(tag)) continue;
+    if (match[0].startsWith("</")) {
+      for (let i = stack.length - 1; i > 0; i--) {
+        if (stack[i].tag === tag) {
+          stack.length = i;
+          break;
+        }
+      }
+      continue;
+    }
+    const node = {
+      tag,
+      href: /href\s*=\s*["']([^"']+)["']/i.exec(match[2] ?? "")?.[1],
+      children: []
+    };
+    stack[stack.length - 1].children.push(node);
+    if (!VOID_TAGS.has(tag) && !match[0].endsWith("/>")) stack.push(node);
+  }
+  addText(html.slice(cursor));
+  return root.children;
+}
+const HTML_BLOCK_TAGS = /* @__PURE__ */ new Set(["p", "div", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "blockquote", "hr", "br", "table"]);
+function renderHtmlNode(node, key, outerBlock) {
+  if (node.tag === null) return node.text;
+  const children = node.children.map((child, index) => renderHtmlNode(child, `${key}-${index}`, outerBlock && HTML_BLOCK_TAGS.has(child.tag ?? ""))).filter((child) => child !== null && child !== "");
+  switch (node.tag) {
+    case "br":
+      return outerBlock ? /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}, key) : " ";
+    case "hr":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "gradient-line my-4 h-px" }, key);
+    case "h1":
+    case "h2":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "mt-5 mb-2 text-sm font-semibold tracking-tight first:mt-0", children }, key);
+    case "h3":
+    case "h4":
+    case "h5":
+    case "h6":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "mt-4 mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground first:mt-0", children }, key);
+    case "p":
+    case "div":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "my-2 first:mt-0", children }, key);
+    case "ul":
+    case "ol": {
+      const ordered = node.tag === "ol";
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "my-2 list-none space-y-1.5 pl-0", children: node.children.map((child, index) => {
+        const childKey = `${key}-${index}`;
+        if ((child.tag ?? "") !== "li") return renderHtmlNode(child, childKey, true);
+        const inner = child.children.map((grandChild, grandIndex) => renderHtmlNode(grandChild, `${childKey}-${grandIndex}`, false)).filter((grandChild) => grandChild !== null && grandChild !== "");
+        return /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "flex gap-2", children: [
+          ordered ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "shrink-0 tabular-nums text-muted-foreground", children: [
+            index + 1,
+            "."
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-[0.45rem] h-1 w-1 shrink-0 rounded-full bg-primary/70" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "min-w-0 flex-1", children: inner })
+        ] }, childKey);
+      }) }, key);
+    }
+    case "li":
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "flex gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-[0.45rem] h-1 w-1 shrink-0 rounded-full bg-primary/70" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "min-w-0 flex-1", children })
+      ] }, key);
+    case "pre":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("pre", { className: "my-3 overflow-x-auto rounded-lg border border-border/60 bg-secondary/40 p-3 font-mono text-[11px] leading-relaxed", children: /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children }) }, key);
+    case "blockquote":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("blockquote", { className: "my-3 border-l-2 border-primary/40 pl-3 text-muted-foreground", children }, key);
+    case "strong":
+    case "b":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "font-semibold text-foreground", children }, key);
+    case "em":
+    case "i":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("em", { className: "italic", children }, key);
+    case "code":
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "rounded bg-secondary/70 px-1.5 py-0.5 font-mono text-[0.82em] text-foreground/90", children }, key);
+    case "a": {
+      const href = node.href ?? "";
+      if (!/^https?:\/\//i.test(href)) return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children }, key);
+      return /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "a",
+        {
+          href,
+          onClick: (event) => {
+            event.preventDefault();
+            void window.api.openExternal(href);
+          },
+          className: "text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary",
+          children
+        },
+        key
+      );
+    }
+    default:
+      return /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children }, key);
+  }
+}
+function HtmlNotes({ text, className }) {
+  const nodes = parseHtml(text);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className, children: nodes.map((node, index) => renderHtmlNode(node, `n${index}`, HTML_BLOCK_TAGS.has(node.tag ?? ""))) });
+}
+const BULLET = /^\s*[-*+]\s+(.*)$/;
+const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
+const HEADING = /^(#{1,6})\s+(.*)$/;
+const RULE = /^\s*([-*_])(?:\s*\1){2,}\s*$/;
+function parseMarkdown(markdown) {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  const blocks = [];
+  let i = 0;
+  const isStart = (line) => !line.trim() || HEADING.test(line) || RULE.test(line) || BULLET.test(line) || NUMBERED.test(line) || /^\s*>/.test(line) || /^\s*```/.test(line);
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+    if (/^\s*```/.test(line)) {
+      const body = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) body.push(lines[i++]);
+      i++;
+      blocks.push({ type: "code", text: body.join("\n") });
+      continue;
+    }
+    const heading = HEADING.exec(line);
+    if (heading) {
+      const level = heading[1].length;
+      blocks.push({ type: level === 1 ? "h1" : level === 2 ? "h2" : "h3", text: heading[2] });
+      i++;
+      continue;
+    }
+    if (RULE.test(line)) {
+      blocks.push({ type: "hr" });
+      i++;
+      continue;
+    }
+    if (BULLET.test(line) || NUMBERED.test(line)) {
+      const numbered = NUMBERED.test(line);
+      const pattern = numbered ? NUMBERED : BULLET;
+      const items = [];
+      while (i < lines.length && pattern.test(lines[i])) {
+        items.push(pattern.exec(lines[i])[1]);
+        i++;
+      }
+      blocks.push({ type: numbered ? "ol" : "ul", items });
+      continue;
+    }
+    if (/^\s*>/.test(line)) {
+      const quoted = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) quoted.push(lines[i++].replace(/^\s*>\s?/, ""));
+      blocks.push({ type: "quote", text: quoted.join(" ") });
+      continue;
+    }
+    const paragraph = [line];
+    i++;
+    while (i < lines.length && !isStart(lines[i])) paragraph.push(lines[i++]);
+    blocks.push({ type: "p", text: paragraph.join(" ").trim() });
+  }
+  return blocks;
+}
+const INLINE = /(\[[^\]]+\]\([^)\s]+\))|(\*\*[^*]+\*\*)|(`[^`]+`)|(\*[^*\n]+\*)|(_[^_\n]+_)/g;
+function renderInline(text, keyPrefix) {
+  const nodes = [];
+  let last = 0;
+  let index = 0;
+  INLINE.lastIndex = 0;
+  let match;
+  while ((match = INLINE.exec(text)) !== null) {
+    if (match.index > last) nodes.push(text.slice(last, match.index));
+    const token = match[0];
+    const key = `${keyPrefix}-${index++}`;
+    if (token.startsWith("[")) {
+      const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token);
+      const label = link?.[1] ?? token;
+      const href = link?.[2] ?? "";
+      nodes.push(
+        /^https?:\/\//i.test(href) ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "a",
+          {
+            href,
+            onClick: (event) => {
+              event.preventDefault();
+              void window.api.openExternal(href);
+            },
+            className: "text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary",
+            children: label
+          },
+          key
+        ) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: label }, key)
+      );
+    } else if (token.startsWith("**")) {
+      nodes.push(
+        /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "font-semibold text-foreground", children: token.slice(2, -2) }, key)
+      );
+    } else if (token.startsWith("`")) {
+      nodes.push(
+        /* @__PURE__ */ jsxRuntimeExports.jsx("code", { className: "rounded bg-secondary/70 px-1.5 py-0.5 font-mono text-[0.82em] text-foreground/90", children: token.slice(1, -1) }, key)
+      );
+    } else {
+      nodes.push(
+        /* @__PURE__ */ jsxRuntimeExports.jsx("em", { className: "italic", children: token.slice(1, -1) }, key)
+      );
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+function MarkdownNotes({ text, className }) {
+  const blocks = parseMarkdown(text);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className, children: blocks.map((block, index) => {
+    const key = `b${index}`;
+    switch (block.type) {
+      case "h1":
+      case "h2":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "mt-5 mb-2 text-sm font-semibold tracking-tight first:mt-0", children: renderInline(block.text ?? "", key) }, key);
+      case "h3":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "mt-4 mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground first:mt-0", children: renderInline(block.text ?? "", key) }, key);
+      case "ul":
+      case "ol":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "my-2 list-none space-y-1.5 pl-0", children: block.items?.map((item, itemIndex) => /* @__PURE__ */ jsxRuntimeExports.jsxs("li", { className: "flex gap-2", children: [
+          block.type === "ol" ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "shrink-0 tabular-nums text-muted-foreground", children: [
+            itemIndex + 1,
+            "."
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-[0.45rem] h-1 w-1 shrink-0 rounded-full bg-primary/70" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "min-w-0 flex-1", children: renderInline(item, `${key}-${itemIndex}`) })
+        ] }, `${key}-${itemIndex}`)) }, key);
+      case "quote":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("blockquote", { className: "my-3 border-l-2 border-primary/40 pl-3 text-muted-foreground", children: renderInline(block.text ?? "", key) }, key);
+      case "code":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "pre",
+          {
+            className: "my-3 overflow-x-auto rounded-lg border border-border/60 bg-secondary/40 p-3 font-mono text-[11px] leading-relaxed",
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("code", { children: block.text })
+          },
+          key
+        );
+      case "hr":
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "gradient-line my-4 h-px" }, key);
+      default:
+        return /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "my-2 first:mt-0", children: renderInline(block.text ?? "", key) }, key);
+    }
+  }) });
+}
+function ReleaseNotes({ text, className }) {
+  const body = (text ?? "").trim();
+  const looksLikeHtml = /<(p|div|ul|ol|li|h[1-6]|strong|em|code|pre|blockquote|br)\b/i.test(body);
+  return looksLikeHtml ? /* @__PURE__ */ jsxRuntimeExports.jsx(HtmlNotes, { text: body, className }) : /* @__PURE__ */ jsxRuntimeExports.jsx(MarkdownNotes, { text: body, className });
+}
+function UpdateDialog() {
+  const { update, whatsNew, updateOpen, setUpdateOpen, checkUpdates, installUpdate, dismissWhatsNew, appInfo } = useLibrary();
+  const open = Boolean(whatsNew) || updateOpen;
+  const status = update?.status ?? "idle";
+  const version = whatsNew?.version ?? update?.version;
+  const notes = (whatsNew?.notes || update?.notes || "").trim();
+  const percent2 = update?.percent ?? 0;
+  const repo = appInfo?.appRepo;
+  const releaseUrl = repo && version ? `https://github.com/${repo}/releases/tag/v${version}` : null;
+  const currentVersion = update?.currentVersion ?? appInfo?.appVersion ?? "";
+  if (!open) return /* @__PURE__ */ jsxRuntimeExports.jsx(jsxRuntimeExports.Fragment, { children: null });
+  const close = () => {
+    if (whatsNew) void dismissWhatsNew();
+    setUpdateOpen(false);
+  };
+  const heading = whatsNew ? `Updated to NovaPS5 v${whatsNew.version}` : status === "checking" ? "Checking for updates" : status === "current" ? "You're up to date" : status === "error" ? "Could not check for updates" : version ? `NovaPS5 v${version} is available` : "Application updates";
+  const blurb = whatsNew ? "The app restarted into the new version. Here is what changed." : status === "checking" ? "Looking for a newer NovaPS5 release on GitHub." : status === "current" ? `NovaPS5 v${currentVersion} is the newest release.` : status === "error" ? update?.detail ?? "The update server could not be reached." : status === "downloading" ? `Downloading the update — ${percent2}%. NovaPS5 restarts itself when it is ready.` : status === "ready" || status === "installing" ? "The update is downloaded. NovaPS5 restarts to install it." : "Updates come from this app’s GitHub releases.";
+  const Icon2 = whatsNew ? CircleCheck : status === "checking" || status === "installing" ? LoaderCircle : status === "current" ? CircleCheck : status === "error" ? TriangleAlert : status === "downloading" || status === "ready" ? Download : Sparkles;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    Dialog,
+    {
+      open,
+      onOpenChange: (next) => {
+        if (!next) close();
+      },
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { className: "max-h-[86vh] overflow-y-auto sm:max-w-lg", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogTitle, { className: "flex items-center gap-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              Icon2,
+              {
+                className: `h-4 w-4 shrink-0 ${status === "checking" || status === "installing" ? "animate-spin text-primary" : ""} ${status === "error" && !whatsNew ? "text-amber-400" : ""} ${whatsNew || status === "current" ? "text-emerald-400" : ""}`
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "min-w-0 break-words", children: heading })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(DialogDescription, { className: "break-words", children: blurb })
+        ] }),
+        (status === "downloading" || status === "ready" || status === "installing" && !whatsNew) && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Progress, { value: status === "ready" || status === "installing" ? 100 : percent2 }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between text-[11px] tabular-nums text-muted-foreground", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: status === "downloading" ? "Downloading update" : "Ready to restart" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+              status === "ready" || status === "installing" ? 100 : percent2,
+              "%"
+            ] })
+          ] })
+        ] }),
+        notes && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl border border-border/60 bg-card/50 p-4 text-xs leading-relaxed text-muted-foreground", children: [
+          !whatsNew && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "section-label mb-2", children: "What's new" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(ReleaseNotes, { text: notes })
+        ] }),
+        !notes && whatsNew && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "rounded-xl border border-border/60 bg-card/50 p-4 text-xs text-muted-foreground", children: [
+          "NovaPS5 updated to v",
+          whatsNew.version,
+          ". No release notes were published for this version."
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogFooter, { className: "items-center gap-2 sm:justify-between", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground/70", children: [
+            currentVersion ? `NovaPS5 v${currentVersion} · ` : "",
+            "Nova Crafted"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+            releaseUrl && /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "ghost", size: "sm", onClick: () => void window.api.openExternal(releaseUrl), children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(ArrowUpRight, { className: "h-3.5 w-3.5" }),
+              " Release notes"
+            ] }),
+            whatsNew ? /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", onClick: close, children: "Got it" }) : status === "ready" || status === "installing" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", onClick: () => void installUpdate(), children: "Restart now" }) : status === "downloading" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "sm", disabled: true, children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-3.5 w-3.5 animate-spin" }),
+              " Downloading…"
+            ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "ghost", size: "sm", onClick: close, children: "Close" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "sm", onClick: () => void checkUpdates(), children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-3.5 w-3.5" }),
+                " Check again"
+              ] })
+            ] })
+          ] })
+        ] })
+      ] })
+    }
+  );
+}
 const STEP_META = {
   check: { label: "Checking for runtime updates", icon: SearchCheck },
   download: { label: "Downloading runtime", icon: Download },
@@ -20846,28 +21389,47 @@ function BootstrapScreen({ onDone }) {
 }
 function TitleBar() {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "drag-region flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 bg-card/40 px-4 backdrop-blur-sm", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "icon.png", alt: "", draggable: false, className: "h-4 w-4 select-none" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: "icon.png", alt: "", draggable: false, className: "h-[18px] w-[18px] shrink-0 select-none rounded-[5px]" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs font-semibold tracking-tight", children: [
       "Nova",
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-primary", children: "PS5" })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-auto mr-[9.5rem] hidden text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/50 md:block", children: "Nova Crafted" })
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mr-[9.5rem] ml-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsx(UpdateButton, {}) })
   ] });
 }
 function App() {
-  const { view, selectedId, load, refreshInfo, setInstalling, bootstrapped, setBootstrapped, setInstallOpen } = useLibrary();
+  const {
+    view,
+    selectedId,
+    load,
+    refreshInfo,
+    setInstalling,
+    bootstrapped,
+    setBootstrapped,
+    setInstallOpen,
+    setUpdate,
+    setUpdateOpen,
+    checkWhatsNew
+  } = useLibrary();
   reactExports.useEffect(() => {
     if (!bootstrapped) return;
     void load();
     void refreshInfo();
+    void checkWhatsNew();
+    void window.api.updateState().then(setUpdate);
     const unsubscribe = window.api.onInstallProgress((progress2) => {
       setInstalling(progress2);
       if (progress2.status === "done") void load();
     });
     const unsubscribeInstall = window.api.onOpenInstall(() => setInstallOpen(true));
+    const unsubscribeUpdate = window.api.onUpdateState((next) => {
+      setUpdate(next);
+      if (next.manual && (next.status === "available" || next.status === "downloading")) setUpdateOpen(true);
+    });
     return () => {
       unsubscribe();
       unsubscribeInstall();
+      unsubscribeUpdate();
     };
   }, [bootstrapped]);
   if (!bootstrapped) {
@@ -20883,7 +21445,8 @@ function App() {
         view === "settings" && /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsView, {})
       ] }) })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(InstallDialog, {})
+    /* @__PURE__ */ jsxRuntimeExports.jsx(InstallDialog, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(UpdateDialog, {})
   ] });
 }
 client.createRoot(document.getElementById("root")).render(

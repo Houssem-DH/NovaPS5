@@ -32,6 +32,7 @@
     "@radix-ui/react-tooltip": "^1.1.2",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9",
     "framer-motion": "^11.3.0",
     "lucide-react": "^0.417.0",
     "react": "^18.3.1",
@@ -65,6 +66,14 @@
       "out/**/*",
       "scripts/unwrap_self.py",
       "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Houssem-DH",
+        "repo": "NovaPS5",
+        "releaseType": "release"
+      }
     ],
     "extraResources": [
       {

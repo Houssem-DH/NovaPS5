@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog, BrowserWindow, shell, app } from 'electron'
 import { randomUUID } from 'crypto'
 import { listGames, removeGame, scanLibrary } from './library'
 import { launchGame } from './launch'
@@ -7,13 +7,15 @@ import { detectDump } from './pipeline/dump'
 import { findPython, pythonInvocation } from './python'
 import { ensureRuntime, readRuntimeManifest } from './runtime'
 import { setGamesDir } from './settings'
-import { toolsDir, runtimeLibsDir, libraryRoot, gamesRoot, runtimeRepo, toolingPresent } from './paths'
+import { checkForUpdates, dismissWhatsNew, installNow, pendingWhatsNew, updateState } from './updater'
+import { toolsDir, runtimeLibsDir, libraryRoot, gamesRoot, runtimeRepo, toolingPresent, APP_REPO } from './paths'
 import type { AppInfo, ImportRequest } from '@shared/types'
 
 async function appInfo(): Promise<AppInfo> {
   const { relinker, libs } = toolingPresent()
   return {
     toolsDir: toolsDir(),
+    appVersion: app.getVersion(),
     relinkerPresent: relinker,
     libsPresent: libs,
     pythonPath: await findPython(),
@@ -21,7 +23,8 @@ async function appInfo(): Promise<AppInfo> {
     libraryRoot: libraryRoot(),
     gamesDir: gamesRoot(),
     runtimeVersion: readRuntimeManifest()?.version ?? null,
-    runtimeRepo: runtimeRepo()
+    runtimeRepo: runtimeRepo(),
+    appRepo: APP_REPO
   }
 }
 
@@ -78,4 +81,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   }))
 
   ipcMain.handle('settings:setGamesDir', (_e, dir: string) => setGamesDir(dir))
+
+  // ---- Application updates --------------------------------------------------
+  ipcMain.handle('update:state', () => updateState())
+  ipcMain.handle('update:check', () => checkForUpdates(true))
+  ipcMain.handle('update:install', () => {
+    installNow()
+    return { ok: true }
+  })
+  ipcMain.handle('update:whatsNew', () => pendingWhatsNew())
+  ipcMain.handle('update:dismissWhatsNew', () => {
+    dismissWhatsNew()
+    return { ok: true }
+  })
+  ipcMain.handle('app:openExternal', async (_e, url: string) => {
+    if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
+  })
 }

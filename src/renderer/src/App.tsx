@@ -5,26 +5,40 @@ import { LibraryView } from '@/components/LibraryView'
 import { GameDetail } from '@/components/GameDetail'
 import { SettingsView } from '@/components/SettingsView'
 import { InstallDialog } from '@/components/InstallDialog'
+import { UpdateButton } from '@/components/UpdateButton'
+import { UpdateDialog } from '@/components/UpdateDialog'
 import { BootstrapScreen } from '@/components/BootstrapScreen'
 
 /** Frameless-window title bar: drags the window; the OS controls sit on top-right. */
 function TitleBar() {
   return (
     <div className="drag-region flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 bg-card/40 px-4 backdrop-blur-sm">
-      <img src="icon.png" alt="" draggable={false} className="h-4 w-4 select-none" />
+      <img src="icon.png" alt="" draggable={false} className="h-[18px] w-[18px] shrink-0 select-none rounded-[5px]" />
       <span className="text-xs font-semibold tracking-tight">
         Nova<span className="text-primary">PS5</span>
       </span>
-      <span className="ml-auto mr-[9.5rem] hidden text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground/50 md:block">
-        Nova Crafted
-      </span>
+      {/* Leaves room for the native window controls pinned to the top-right. */}
+      <div className="mr-[9.5rem] ml-auto">
+        <UpdateButton />
+      </div>
     </div>
   )
 }
 
 export default function App() {
-  const { view, selectedId, load, refreshInfo, setInstalling, bootstrapped, setBootstrapped, setInstallOpen } =
-    useLibrary()
+  const {
+    view,
+    selectedId,
+    load,
+    refreshInfo,
+    setInstalling,
+    bootstrapped,
+    setBootstrapped,
+    setInstallOpen,
+    setUpdate,
+    setUpdateOpen,
+    checkWhatsNew
+  } = useLibrary()
 
   useEffect(() => {
     // Library IO waits for the runtime bootstrap — the checklist screen owns
@@ -33,15 +47,24 @@ export default function App() {
 
     void load()
     void refreshInfo()
+    // An update installed by the previous run leaves its release notes behind.
+    void checkWhatsNew()
+    void window.api.updateState().then(setUpdate)
 
     const unsubscribe = window.api.onInstallProgress((progress) => {
       setInstalling(progress)
       if (progress.status === 'done') void load()
     })
     const unsubscribeInstall = window.api.onOpenInstall(() => setInstallOpen(true))
+    const unsubscribeUpdate = window.api.onUpdateState((next) => {
+      setUpdate(next)
+      // A check started from the tray or the File menu should show its result.
+      if (next.manual && (next.status === 'available' || next.status === 'downloading')) setUpdateOpen(true)
+    })
     return () => {
       unsubscribe()
       unsubscribeInstall()
+      unsubscribeUpdate()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootstrapped])
@@ -65,6 +88,7 @@ export default function App() {
         </main>
       </div>
       <InstallDialog />
+      <UpdateDialog />
     </div>
   )
 }

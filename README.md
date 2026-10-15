@@ -27,6 +27,10 @@ whether it works**. No command line, no manual tooling.
 - **Runtime updates.** The conversion runtime is fetched from AnyPS5 releases and refreshed
   automatically; Settings shows *Up to date* with an on-demand **Scan for updates**.
 - **Python is bundled.** End users never install Python — the interpreter ships inside the app.
+- **Updates itself.** The header shows the update state and checks GitHub on every launch. A newer
+  release downloads in the background, installs by itself, restarts NovaPS5 and opens a **What's new**
+  dialog with the version that landed and the release notes you published. Closing the window parks the
+  app in the tray so an update never interrupts you.
 
 ## Requirements
 
@@ -64,6 +68,48 @@ the executable.
 Icon/branding assets: `public/icon.png` (app icon) and `public/logo.png` (wordmark). Regenerate the
 Windows icon after changing them with `powershell -ExecutionPolicy Bypass -File scripts/make-icon.ps1`.
 
+## Releasing an update
+
+The app updates itself from this repository's **GitHub Releases** (see `build.publish` in
+`package.json`). To ship a version:
+
+1. **Bump the version** in `package.json` (`0.1.0` → `0.2.0`) and commit it.
+2. Run `npm run dist` — this builds `release/NovaPS5-Setup-<version>.exe` and prints the exact files to
+   attach.
+3. Draft a new release on [github.com/Houssem-DH/NovaPS5/releases](https://github.com/Houssem-DH/NovaPS5/releases)
+   with the tag `v<version>` (matching `package.json` exactly) and **attach three files** from `release/`:
+
+   | File | Why it is needed |
+   | --- | --- |
+   | `NovaPS5-Setup-<version>.exe` | the installer the app runs to update |
+   | `latest.yml` | what the updater reads first (version + file name + hash) |
+   | `NovaPS5-Setup-<version>.exe.blockmap` | lets the updater download only the changed parts |
+
+4. Write the **release notes in Markdown** — headings, lists, `**bold**`, `` `code` ``, quotes and links
+   are all rendered in the in-app What's new dialog. GitHub stores the body as Markdown and the updater
+   reads it back already rendered as HTML, so both are handled; a plain-text body is treated as Markdown.
+
+   ```markdown
+   ## Highlights
+   - Preflight now warns before a bad dump is installed
+   - Installs use a stage-then-swap layout
+
+   ### Fixes
+   1. Games that crash at startup report their exit code
+   ```
+
+5. Publish the release. Existing installs pick it up on their next launch (or from the header control
+   / **Settings ▸ Application updates**), download it in the background, then restart into the new
+   version and show what changed.
+
+Notes:
+
+- A git **tag alone is not enough** — electron-updater looks for the published release and its
+  `latest.yml`. Nothing to attach means the check reports *Release is incomplete*.
+- To exercise the real check from a source build, set `NOVAPS5_DEV_UPDATES=1` before `npm run dev`
+  (it reads `dev-app-update.yml`). Without it, source builds report that checks are for installed builds.
+- Update state lives in `updates.json` under the app's user-data folder (`%APPDATA%\NovaPS5`).
+
 ## How an install works
 
 ```
@@ -93,5 +139,7 @@ validate → copy to staging → unwrap eboot (SELF → ELF) → unwrap modules 
 
 - Use dumps of games you own. NovaPS5 is a local converter — it ships no game content and has no
   downloader.
+- Closing the window keeps NovaPS5 running in the tray (click the tray icon to bring it back); quit
+  from the tray menu or with `Ctrl+Q`.
 - The conversion runtime (relinker + libraries) comes from the
   [AnyPS5 releases](https://github.com/boykopovar/AnyPS5/releases) and can be updated from Settings.

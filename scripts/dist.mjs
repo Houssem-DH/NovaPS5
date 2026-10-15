@@ -160,6 +160,21 @@ if (!primed.winCodeSign && !canCreateSymlinks()) {
 run(process.execPath, ['node_modules/electron-vite/bin/electron-vite.js', 'build'], 'building the app')
 run(
   process.execPath,
-  ['node_modules/electron-builder/out/cli/cli.js', '--win', ...(unpackedOnly ? ['--dir'] : [])],
+  ['node_modules/electron-builder/out/cli/cli.js', '--win', '--publish', 'never', ...(unpackedOnly ? ['--dir'] : [])],
   unpackedOnly ? 'packaging release/win-unpacked' : 'packaging the installer'
 )
+
+if (!unpackedOnly) {
+  process.stdout.write(`
+[dist] done. To ship this version, publish a GitHub release on
+       https://github.com/Houssem-DH/NovaPS5/releases with the tag v${require(path.join(root, 'package.json')).version}
+       and attach these files from release/ (NovaPS5 updates itself from them):
+
+         NovaPS5-Setup-<version>.exe      the installer
+         latest.yml                       what the updater reads first
+         NovaPS5-Setup-<version>.exe.blockmap
+
+       Write the release notes in Markdown — the app renders them in its
+       "What's new" dialog after updating.
+`)
+}
