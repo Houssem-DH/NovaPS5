@@ -7,6 +7,7 @@ let cache: LibraryData | null = null
 
 async function load(): Promise<LibraryData> {
   if (cache) return cache
+  cache = { games: [] }
   try {
     const raw = await fsp.readFile(libraryFile(), 'utf8')
     // Tolerate a leading BOM (editors like Notepad/PowerShell add one) — a BOM
@@ -15,7 +16,17 @@ async function load(): Promise<LibraryData> {
     const parsed = JSON.parse(text) as LibraryData
     cache = { games: Array.isArray(parsed.games) ? parsed.games : [] }
   } catch {
-    cache = { games: [] }
+    // The live file is missing or unreadable (e.g. a write was interrupted).
+    // Fall back to the previous good copy rather than silently starting empty
+    // — losing the user's whole library is never an acceptable recovery.
+    try {
+      const backup = await fsp.readFile(`${libraryFile()}.bak`, 'utf8')
+      const text = backup.charCodeAt(0) === 0xfeff ? backup.slice(1) : backup
+      const parsed = JSON.parse(text) as LibraryData
+      if (Array.isArray(parsed.games)) cache = { games: parsed.games }
+    } catch {
+      /* no usable backup either — start with what we have (empty) */
+    }
   }
   return cache
 }
@@ -23,7 +34,14 @@ async function load(): Promise<LibraryData> {
 async function persist(): Promise<void> {
   if (!cache) return
   ensureDir(path.dirname(libraryFile()))
-  await fsp.writeFile(libraryFile(), JSON.stringify(cache, null, 2), 'utf8')
+  const file = libraryFile()
+  // Write to a temp file and rename it into place (atomic on the same volume),
+  // keeping the previous version as .bak — an interrupted or concurrent write
+  // can then never leave a half-written library behind.
+  const tmp = `${file}.tmp`
+  await fsp.writeFile(tmp, JSON.stringify(cache, null, 2), 'utf8')
+  await fsp.copyFile(file, `${file}.bak`).catch(() => {})
+  await fsp.rename(tmp, file)
 }
 
 /** Turn a display name into a safe folder/id slug. */

@@ -4,6 +4,7 @@ import {
   FileArchive,
   Package,
   Loader2,
+  Play,
   CheckCircle2,
   AlertTriangle,
   XCircle
@@ -23,7 +24,7 @@ import type { DetectResult } from '@shared/types'
 import { formatBytes } from '@/lib/format'
 
 export function InstallDialog() {
-  const { installOpen, setInstallOpen, installing, setInstalling, load } = useLibrary()
+  const { installOpen, setInstallOpen, installing, setInstalling, load, launch } = useLibrary()
 
   const [source, setSource] = useState<string | null>(null)
   const [detect, setDetect] = useState<DetectResult | null>(null)
@@ -66,15 +67,14 @@ export function InstallDialog() {
   useEffect(() => {
     if (!done) return
     load()
-    const timer = setTimeout(() => {
-      reset()
-      setInstallOpen(false)
-    }, 1800)
-    return () => clearTimeout(timer)
+    // The dialog stays open on purpose: the user must see the launch-test
+    // verdict (works / not working) before dismissing it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [done])
 
   const showProgress = installing && (running || done || failed)
+  const works = done && installing?.launchState === 'works'
+  const launchFailed = done && installing?.launchState === 'failed'
 
   return (
     <Dialog open={installOpen} onOpenChange={handleOpenChange}>
@@ -90,7 +90,11 @@ export function InstallDialog() {
           <div className="space-y-4 py-2">
             <div className="flex items-center gap-3">
               {done ? (
-                <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-400" />
+                launchFailed ? (
+                  <XCircle className="h-6 w-6 shrink-0 text-red-400" />
+                ) : (
+                  <CheckCircle2 className="h-6 w-6 shrink-0 text-emerald-400" />
+                )
               ) : failed ? (
                 <AlertTriangle className="h-6 w-6 shrink-0 text-red-400" />
               ) : (
@@ -98,10 +102,28 @@ export function InstallDialog() {
               )}
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">
-                  {done ? 'Installed — ready to play' : failed ? 'Conversion failed' : installing?.message}
+                  {done
+                    ? launchFailed
+                      ? 'Installed — launch test failed'
+                      : works
+                        ? 'Installed — launch test passed'
+                        : 'Installed — ready to play'
+                    : failed
+                      ? 'Conversion failed'
+                      : installing?.message}
                 </p>
                 {installing?.gameName && done && (
                   <p className="truncate text-xs text-muted-foreground">{installing.gameName}</p>
+                )}
+                {done && launchFailed && (
+                  <p className="mt-1 break-all text-xs text-red-300">
+                    The game did not start: {installing?.launchDetail}
+                  </p>
+                )}
+                {done && works && (
+                  <p className="mt-1 text-xs text-emerald-300/90">
+                    The game started and kept running — it works.
+                  </p>
                 )}
                 {failed && installing?.error && (
                   <p className="mt-1 break-all text-xs text-red-400/90">{installing.error}</p>
@@ -117,14 +139,31 @@ export function InstallDialog() {
             {!done && !failed && (
               <p className="text-xs text-muted-foreground">
                 This can take a few minutes for large games. The app unwraps, relinks, and arranges everything
-                automatically.
+                automatically — after that it launches the game once to verify it works.
               </p>
             )}
 
             {done && (
-              <Button variant="outline" className="w-full" onClick={() => { reset(); setInstallOpen(false) }}>
-                Close
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  className="flex-1"
+                  onClick={() => {
+                    if (installing?.gameId) void launch(installing.gameId)
+                  }}
+                >
+                  <Play className="h-4 w-4" /> {launchFailed ? 'Play anyway' : 'Play'}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    reset()
+                    setInstallOpen(false)
+                  }}
+                >
+                  Close
+                </Button>
+              </div>
             )}
             {failed && (
               <Button variant="outline" className="w-full" onClick={reset}>
@@ -149,7 +188,7 @@ export function InstallDialog() {
                 className="flex flex-col items-center gap-2 rounded-xl border border-border/60 bg-secondary/50 p-4 text-sm font-medium transition-colors hover:border-primary/50 hover:bg-accent disabled:opacity-60"
               >
                 <FileArchive className="h-5 w-5 text-primary" />
-                Select .zip archive
+                Select .zip / .rar / .7z
               </button>
             </div>
 

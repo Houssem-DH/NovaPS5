@@ -32,6 +32,20 @@ export function GameCard({ game, index }: { game: Game; index: number }) {
 
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent" />
 
+        {/* Launch test verdict from the post-install check */}
+        {game.launchState && (
+          <span
+            className={`absolute left-2 top-2 z-10 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-sm ${
+              game.launchState === 'works'
+                ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40'
+                : 'bg-red-500/20 text-red-300 ring-1 ring-red-400/40'
+            }`}
+            title={game.launchDetail}
+          >
+            {game.launchState === 'works' ? '✓ Works' : '✗ Not working'}
+          </span>
+        )}
+
         {/* Hover play overlay */}
         <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 backdrop-blur-[1px] transition-opacity duration-300 group-hover:opacity-100">
           <button

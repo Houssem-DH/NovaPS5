@@ -8,7 +8,8 @@ import { relink } from './relink'
 import { copyDir, dirSize } from './copy'
 import { buildLayout } from './layout'
 import { resolveSource, readMeta } from './dump'
-import { checkCompatibility, formatBlockers, isBackupName } from './compat'
+import { checkCompatibility, formatBlockers, isBackupName, moduleDirRank } from './compat'
+import { probeLaunch, type LaunchProbe } from './verify'
 import { addGame, getGame, slugify } from '../library'
 import type { Game, InstallProgress, InstallStep } from '@shared/types'
 
@@ -102,7 +103,7 @@ export async function installGame(
     // (images/, media/, *.js, ...). Copying the whole tree keeps any layout
     // playable; only unwrap backups are skipped.
     const entries = (await fsp.readdir(dumpRoot, { withFileTypes: true })).filter(
-      (entry) => !isBackup(entry.name)
+      (entry) => !isBackup(entry.name) && !isBackupName(entry.name)
     )
     let total = 0
     for (const entry of entries) total += await dirSize(path.join(dumpRoot, entry.name))
@@ -112,7 +113,6 @@ export async function installGame(
     for (const entry of entries) {
       const src = path.join(dumpRoot, entry.name)
       const dest = path.join(installDir, entry.name)
-      const stat = await fsp.stat(src)
       const tick = (n: number): void => {
         copied += n
         const pct = total > 0 ? 8 + Math.min(42, (copied / total) * 42) : 8
@@ -123,16 +123,39 @@ export async function installGame(
           emit(`Copying ${entry.name}…`, pct, 'copying')
         }
       }
-      if (entry.isDirectory()) await copyDir(src, dest, tick)
-      else if (entry.isFile()) {
-        await fsp.copyFile(src, dest)
-        tick(stat.size)
+      if (entry.isDirectory()) {
+        await copyDir(src, dest, tick)
+        continue
+      }
+      // Files, symlinks and archive oddities alike are copied by content —
+      // never skip an entry silently (a skipped file must not surface later
+      // as a cryptic "corrupted dump" error).
+      try {
+        const followed = await fsp.stat(src) // follows symlinks
+        if (followed.isDirectory()) {
+          await copyDir(src, dest, tick)
+        } else {
+          await fsp.copyFile(src, dest)
+          tick(followed.size)
+        }
+      } catch (error) {
+        throw new Error(
+          `Could not copy "${entry.name}" from the dump — ${error instanceof Error ? error.message : String(error)}`
+        )
       }
     }
 
     // ---- Unwrap the eboot (SELF -> ELF) ----
     const ebootDest = path.join(installDir, 'eboot.bin')
     const inputElf = path.join(installDir, 'input.elf')
+    // The eboot is the one file the pipeline cannot proceed without: verify it
+    // landed and re-copy it straight from the source if anything interfered.
+    if (detectContainer(ebootDest) === 'unknown') {
+      const sourceEboot = path.join(dumpRoot, 'eboot.bin')
+      if (detectContainer(sourceEboot) !== 'unknown') {
+        await fsp.copyFile(sourceEboot, ebootDest)
+      }
+    }
     const ebootKind = detectContainer(ebootDest)
     if (ebootKind === 'self') {
       emit('Unwrapping eboot (SELF → ELF)…', 55, 'unwrapping-eboot')
@@ -155,6 +178,20 @@ export async function installGame(
     // outside sce_sys, unwrap each SELF in place, and remember its
     // directory so the relinker converts it too (sce_module/ is built in).
     emit('Preparing modules…', 60, 'preparing-modules')
+    // The relinker refuses to run when both folder spellings exist — merge
+    // sce_modules/ into sce_module/ on the staging copy (name conflicts keep
+    // the sce_module file) and drop the now-empty plural folder.
+    const singularDir = path.join(installDir, 'sce_module')
+    const pluralDir = path.join(installDir, 'sce_modules')
+    if (fs.existsSync(singularDir) && fs.existsSync(pluralDir)) {
+      for (const entry of await fsp.readdir(pluralDir, { withFileTypes: true })) {
+        const from = path.join(pluralDir, entry.name)
+        const to = path.join(singularDir, entry.name)
+        if (fs.existsSync(to)) await fsp.rm(from, { recursive: true, force: true })
+        else await fsp.rename(from, to)
+      }
+      await fsp.rm(pluralDir, { recursive: true, force: true })
+    }
     const prxDirs: string[] = [] // every directory (relative) holding modules
     const moduleDirs: string[] = [] // …that need an explicit --module-dir
     const scanForModules = async (dir: string, rel: string, depth: number): Promise<void> => {
@@ -198,6 +235,40 @@ export async function installGame(
         if (isBackupName(file)) {
           await fsp.rm(path.join(dir, file), { force: true })
         }
+      }
+    }
+
+    // Duplicated module files across folders (same name, ELF/SELF content —
+    // exactly what the relinker picks up by content). Two files claiming one
+    // name abort the conversion, so keep the copy in the folder the
+    // compatibility report names (sce_module > sce_modules > prx > elsewhere)
+    // and drop the others from the staging copy only.
+    interface PickupFile {
+      rel: string
+      file: string
+      folded: string
+    }
+    const pickup: PickupFile[] = []
+    for (const rel of prxDirs) {
+      const dir = path.join(installDir, rel)
+      for (const file of await fsp.readdir(dir).catch(() => [] as string[])) {
+        const kind = detectContainer(path.join(dir, file))
+        if (kind !== 'elf' && kind !== 'self') continue
+        pickup.push({ rel, file, folded: file.toLowerCase() })
+      }
+    }
+    const keepRel = new Map<string, string>()
+    for (const item of pickup) {
+      const current = keepRel.get(item.folded)
+      const better =
+        current === undefined ||
+        moduleDirRank(item.rel) < moduleDirRank(current) ||
+        (moduleDirRank(item.rel) === moduleDirRank(current) && item.rel < current)
+      if (better) keepRel.set(item.folded, item.rel)
+    }
+    for (const item of pickup) {
+      if (keepRel.get(item.folded) !== item.rel) {
+        await fsp.rm(path.join(installDir, item.rel, item.file), { force: true })
       }
     }
     for (const rel of prxDirs) {
@@ -284,6 +355,17 @@ export async function installGame(
     activeStages.delete(stageName)
     stageDir = null
 
+    // ---- Post-install launch test: verify the game actually starts --------
+    // The verdict goes into the library so the UI can show Works / Not
+    // working. A failed launch never fails the installation itself.
+    emit('Launch test — starting the game…', 97, 'launch-test')
+    let probe: LaunchProbe = { state: 'failed', detail: 'the launch test could not start' }
+    try {
+      probe = await probeLaunch(path.join(finalDir, path.basename(exePath)), finalDir)
+    } catch (error) {
+      probe = { state: 'failed', detail: error instanceof Error ? error.message : String(error) }
+    }
+
     const sizeBytes = await dirSize(finalDir)
     const game: Game = {
       id,
@@ -295,11 +377,26 @@ export async function installGame(
       sizeBytes,
       cover,
       status: 'ready',
-      installedAt: Date.now()
+      installedAt: Date.now(),
+      launchState: probe.state,
+      launchDetail: probe.detail
     }
     await addGame(game)
 
-    report({ jobId, step: 'done', message: 'Ready to play', percent: 100, status: 'done', gameId: id, gameName: name })
+    report({
+      jobId,
+      step: 'done',
+      message:
+        probe.state === 'works'
+          ? 'Installed — launch test passed, the game is running'
+          : 'Installed — launch test failed',
+      percent: 100,
+      status: 'done',
+      gameId: id,
+      gameName: name,
+      launchState: probe.state,
+      launchDetail: probe.detail
+    })
     return game
   } catch (error) {
     if (tempDir) await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {})

@@ -38,7 +38,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const win = getWindow()
     const options: Electron.OpenDialogOptions = {
       properties: ['openFile'],
-      filters: [{ name: 'PS5 dump archive', extensions: ['zip'] }]
+      filters: [{ name: 'PS5 dump archive', extensions: ['zip', 'rar', '7z'] }]
     }
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     return result.canceled ? null : result.filePaths[0]

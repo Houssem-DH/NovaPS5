@@ -5,6 +5,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const child_process = require("child_process");
 const util = require("util");
+const os = require("os");
 const DEFAULT_RUNTIME_REPO = "boykopovar/AnyPS5";
 let toolsOverride = null;
 function setToolsOverride(dir) {
@@ -100,20 +101,32 @@ function toolingPresent() {
 let cache = null;
 async function load() {
   if (cache) return cache;
+  cache = { games: [] };
   try {
     const raw = await fs.promises.readFile(libraryFile(), "utf8");
     const text = raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
     const parsed = JSON.parse(text);
     cache = { games: Array.isArray(parsed.games) ? parsed.games : [] };
   } catch {
-    cache = { games: [] };
+    try {
+      const backup = await fs.promises.readFile(`${libraryFile()}.bak`, "utf8");
+      const text = backup.charCodeAt(0) === 65279 ? backup.slice(1) : backup;
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed.games)) cache = { games: parsed.games };
+    } catch {
+    }
   }
   return cache;
 }
 async function persist() {
   if (!cache) return;
   ensureDir(path.dirname(libraryFile()));
-  await fs.promises.writeFile(libraryFile(), JSON.stringify(cache, null, 2), "utf8");
+  const file = libraryFile();
+  const tmp = `${file}.tmp`;
+  await fs.promises.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
+  await fs.promises.copyFile(file, `${file}.bak`).catch(() => {
+  });
+  await fs.promises.rename(tmp, file);
 }
 function slugify(name) {
   const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -379,19 +392,26 @@ async function dirSize(target) {
   }
   return total;
 }
-async function copyDir(src, dest, onBytes) {
+async function copyDir(src, dest, onBytes, depth = 0) {
+  if (depth > 32) return;
   await fs.promises.mkdir(dest, { recursive: true });
   const entries = await fs.promises.readdir(src, { withFileTypes: true });
   for (const entry of entries) {
-    if (entry.isSymbolicLink()) continue;
     const from = path.join(src, entry.name);
     const to = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      await copyDir(from, to, onBytes);
-    } else if (entry.isFile()) {
-      const stat = await fs.promises.stat(from);
-      await fs.promises.copyFile(from, to);
-      onBytes(stat.size);
+      await copyDir(from, to, onBytes, depth + 1);
+      continue;
+    }
+    try {
+      const followed = await fs.promises.stat(from);
+      if (followed.isDirectory()) {
+        await copyDir(from, to, onBytes, depth + 1);
+      } else {
+        await fs.promises.copyFile(from, to);
+        onBytes(followed.size);
+      }
+    } catch {
     }
   }
 }
@@ -473,6 +493,101 @@ async function fileMagic(file) {
     });
   }
 }
+function moduleDirRank(rel) {
+  if (rel === "sce_module") return 0;
+  if (rel === "sce_modules") return 1;
+  if (rel === "prx") return 2;
+  return 3;
+}
+function normalizeLibName(name) {
+  const base = name.split(/[\\/]/).pop() ?? name;
+  return base.toLowerCase().replace(/\.(prx|sprx|so|elf)$/, "");
+}
+function readNeeded(elfPath) {
+  let fd = null;
+  try {
+    fd = fs.openSync(elfPath, "r");
+    const head = Buffer.alloc(64);
+    if (fs.readSync(fd, head, 0, 64, 0) < 52) return null;
+    if (!head.subarray(0, 4).equals(ELF_MAGIC)) return null;
+    const is64 = head[4] === 2;
+    const phoff = Number(is64 ? head.readBigUInt64LE(32) : head.readUInt32LE(28));
+    const phentsize = head.readUInt16LE(is64 ? 54 : 42);
+    const phnum = head.readUInt16LE(is64 ? 56 : 44);
+    if (phnum === 0 || phnum > 256) return null;
+    const loads = [];
+    let dynOff = -1;
+    let dynSize = 0;
+    const phdr = Buffer.alloc(phentsize);
+    for (let i = 0; i < phnum; i++) {
+      fs.readSync(fd, phdr, 0, phentsize, phoff + i * phentsize);
+      const type = phdr.readUInt32LE(0);
+      if (is64) {
+        const off = Number(phdr.readBigUInt64LE(8));
+        const vaddr = Number(phdr.readBigUInt64LE(16));
+        const filesz = Number(phdr.readBigUInt64LE(32));
+        if (type === 1) loads.push({ vaddr, off, filesz });
+        else if (type === 2) {
+          dynOff = off;
+          dynSize = filesz;
+        }
+      } else {
+        const off = phdr.readUInt32LE(4);
+        const vaddr = phdr.readUInt32LE(8);
+        const filesz = phdr.readUInt32LE(16);
+        if (type === 1) loads.push({ vaddr, off, filesz });
+        else if (type === 2) {
+          dynOff = off;
+          dynSize = filesz;
+        }
+      }
+    }
+    if (dynOff < 0 || dynSize <= 0) return null;
+    const vaddrToOff = (vaddr) => {
+      for (const load2 of loads) {
+        if (vaddr >= load2.vaddr && vaddr < load2.vaddr + load2.filesz) {
+          return load2.off + (vaddr - load2.vaddr);
+        }
+      }
+      return -1;
+    };
+    const entrySize = is64 ? 16 : 8;
+    const dyn = Buffer.alloc(Math.min(dynSize, entrySize * 1024));
+    fs.readSync(fd, dyn, 0, dyn.length, dynOff);
+    const tags = [];
+    for (let o = 0; o + entrySize <= dyn.length; o += entrySize) {
+      const tag = is64 ? Number(dyn.readBigInt64LE(o)) : dyn.readInt32LE(o);
+      if (tag === 0) break;
+      const val = is64 ? Number(dyn.readBigUInt64LE(o + 8)) : dyn.readUInt32LE(o + 4);
+      tags.push({ tag, val });
+    }
+    const strtabVal = tags.find((t) => t.tag === 5)?.val;
+    const neededVals = tags.filter((t) => t.tag === 1);
+    if (strtabVal === void 0) return neededVals.length > 0 ? null : [];
+    const strOff = vaddrToOff(strtabVal);
+    if (strOff < 0) return null;
+    const strsz = tags.find((t) => t.tag === 10)?.val ?? 65536;
+    const strtab = Buffer.alloc(Math.min(strsz, 4 << 20));
+    fs.readSync(fd, strtab, 0, strtab.length, strOff);
+    const names = [];
+    for (const { val } of neededVals) {
+      if (val < 0 || val >= strtab.length) continue;
+      const end = strtab.indexOf(0, val);
+      const name = strtab.subarray(val, end === -1 ? void 0 : end).toString("latin1");
+      if (name) names.push(name);
+    }
+    return names;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+      }
+    }
+  }
+}
 async function walkModuleDirs(root) {
   const dirs = [];
   const visit = async (full, rel, depth) => {
@@ -531,6 +646,7 @@ async function checkCompatibility(root) {
       detail: bytes === "empty" || bytes === "unreadable" ? `eboot.bin is ${bytes} — the dump is incomplete; re-copy or re-extract it.` : `eboot.bin is not a recognized ELF or SELF file (first bytes: ${bytes}) — the file is truncated, corrupted, or not an eboot.`
     });
   }
+  let needed = null;
   if (kind === "self") {
     const python = await findPython();
     checks.push(
@@ -546,6 +662,37 @@ async function checkCompatibility(root) {
         detail: "Python 3 is required to unwrap SELF containers — install it from python.org."
       }
     );
+    if (python) {
+      const trialDir = path.join(os.tmpdir(), `novaps5-compat-${process.pid}-${Date.now()}`);
+      try {
+        await fs.promises.mkdir(trialDir, { recursive: true });
+        const outElf = path.join(trialDir, "eboot.elf");
+        await unwrapSelf(eboot, outElf);
+        needed = readNeeded(outElf);
+        checks.push({
+          id: "unwrap",
+          label: "Eboot unwrap",
+          status: "pass",
+          detail: "Trial unwrap succeeded — the executable converts cleanly."
+        });
+      } catch (error) {
+        const detail = (error instanceof Error ? error.message : String(error)).replace(
+          /^Unwrap failed — /,
+          ""
+        );
+        checks.push({
+          id: "unwrap",
+          label: "Eboot unwrap",
+          status: "fail",
+          detail: `The eboot cannot be converted: ${detail}`
+        });
+      } finally {
+        await fs.promises.rm(trialDir, { recursive: true, force: true }).catch(() => {
+        });
+      }
+    }
+  } else if (kind === "elf") {
+    needed = readNeeded(eboot);
   }
   const tools = toolingPresent();
   checks.push(
@@ -566,14 +713,8 @@ async function checkCompatibility(root) {
   const hasPrxDir = fs.existsSync(path.join(root, "prx"));
   const moduleIssues = [];
   let moduleCount = 0;
-  if (hasSingular && hasPlural) {
-    moduleIssues.push({
-      id: "modules-both",
-      label: "Modules",
-      status: "fail",
-      detail: "The dump has both sce_module/ and sce_modules/ — keep only one of them."
-    });
-  } else if (!hasSingular && !hasPlural && !hasPrxDir) {
+  const moduleFileNames = /* @__PURE__ */ new Set();
+  if (!hasSingular && !hasPlural && !hasPrxDir) {
     moduleIssues.push({
       id: "modules-none",
       label: "Modules",
@@ -581,6 +722,14 @@ async function checkCompatibility(root) {
       detail: "No sce_module/ folder — this dump ships no loadable modules for the converter."
     });
   } else {
+    if (hasSingular && hasPlural) {
+      moduleIssues.push({
+        id: "modules-both",
+        label: "Modules",
+        status: "warn",
+        detail: "Both sce_module/ and sce_modules/ exist — sce_modules/ will be merged into sce_module/ automatically."
+      });
+    }
     const rootDirs = [
       hasSingular ? "sce_module" : null,
       hasPlural ? "sce_modules" : null,
@@ -602,6 +751,7 @@ async function checkCompatibility(root) {
         const magic = await fileMagic(path.join(root, rel, entry.name));
         if (magic === "other") continue;
         files.push({ rel, name: entry.name, magic });
+        moduleFileNames.add(entry.name.toLowerCase());
       }
     }
     const byName = /* @__PURE__ */ new Map();
@@ -613,12 +763,15 @@ async function checkCompatibility(root) {
     }
     for (const [, bucket] of byName) {
       if (bucket.length < 2) continue;
+      bucket.sort(
+        (a, b) => moduleDirRank(a.rel) - moduleDirRank(b.rel) || a.rel.localeCompare(b.rel)
+      );
       const locations = [...new Set(bucket.map((f) => `${f.rel}/${f.name}`))].join(" and ");
       moduleIssues.push({
         id: `modules-dup-${bucket[0].name.toLowerCase()}`,
         label: "Modules",
-        status: "fail",
-        detail: `Duplicate module "${bucket[0].name}" found at ${locations} — remove one copy so the converter can tell them apart.`
+        status: "warn",
+        detail: `Duplicate module "${bucket[0].name}" at ${locations} — the converter keeps the copy in ${bucket[0].rel}/ and skips the others.`
       });
     }
     const backups = files.filter((file) => isBackupName(file.name) || file.name.endsWith(".esbak"));
@@ -650,13 +803,38 @@ async function checkCompatibility(root) {
   if (moduleIssues.some((check) => check.status === "fail")) {
     checks.push(...moduleIssues.filter((check) => check.status === "fail"));
   } else {
+    const clean = moduleIssues.length === 0;
     checks.push(
       ...moduleIssues,
       {
         id: "modules",
         label: "Modules",
         status: "pass",
-        detail: `${moduleCount} loadable module${moduleCount === 1 ? "" : "s"} found — folders are consistent.`
+        detail: clean ? `${moduleCount} loadable module${moduleCount === 1 ? "" : "s"} found — folders are consistent.` : `${moduleCount} loadable module${moduleCount === 1 ? "" : "s"} found — the notes above are reconciled during conversion.`
+      }
+    );
+  }
+  if (needed && needed.length > 0 && tools.libs) {
+    const provided = /* @__PURE__ */ new Set();
+    try {
+      for (const entry of fs.readdirSync(runtimeLibsDir(), { withFileTypes: true })) {
+        if (entry.isFile()) provided.add(normalizeLibName(entry.name));
+      }
+    } catch {
+    }
+    for (const name of moduleFileNames) provided.add(normalizeLibName(name));
+    const missing = needed.filter((name) => !provided.has(normalizeLibName(name)));
+    checks.push(
+      missing.length > 0 ? {
+        id: "deps",
+        label: "Libraries",
+        status: "warn",
+        detail: `Requires libraries the conversion runtime does not provide: ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ` (+${missing.length - 4} more)` : ""} — the game may fail to launch.`
+      } : {
+        id: "deps",
+        label: "Libraries",
+        status: "pass",
+        detail: `All ${needed.length} required librar${needed.length === 1 ? "y is" : "ies are"} provided by the runtime or the dump.`
       }
     );
   }
@@ -754,9 +932,9 @@ async function readMeta(sourceDir) {
   }
   return { name, titleId, hasCover };
 }
-async function extractZip$1(zip, dest) {
+async function extractArchive(archive, dest) {
   await fs.promises.mkdir(dest, { recursive: true });
-  const { code, stderr } = await run("tar", ["-xf", zip, "-C", dest], {
+  const { code, stderr } = await run("tar", ["-xf", archive, "-C", dest], {
     timeoutMs: 30 * 60 * 1e3
   });
   if (code !== 0) {
@@ -764,9 +942,9 @@ async function extractZip$1(zip, dest) {
   }
 }
 async function resolveSource(sourcePath) {
-  if (/\.zip$/i.test(sourcePath)) {
+  if (/\.(zip|rar|7z)$/i.test(sourcePath)) {
     const tempDir = path.join(electron.app.getPath("temp"), `ps5lib-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
-    await extractZip$1(sourcePath, tempDir);
+    await extractArchive(sourcePath, tempDir);
     const root2 = await locateDumpRoot(tempDir) ?? tempDir;
     return { root: root2, tempDir };
   }
@@ -804,6 +982,119 @@ async function detectDump(sourcePath) {
     if (tempDir) await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
     });
   }
+}
+const LOG_PREFIX = "novaps5-launch-";
+function describeCode(code) {
+  const hex = `0x${(code >>> 0).toString(16).toUpperCase()}`;
+  const names = {
+    3221225477: "access violation",
+    3221225480: "invalid handle",
+    3221225501: "illegal instruction",
+    3221225620: "divide by zero",
+    3221225786: "terminated (Ctrl+C or logoff)",
+    3221225794: "DLL initialization failed",
+    3221226505: "stack buffer overrun / fail-fast",
+    3221226519: "invalid parameter / fail-fast"
+  };
+  const name = names[code >>> 0];
+  return name ? `${hex} — ${name}` : hex;
+}
+function summarizeExit(code, signal, logPath) {
+  let text = "";
+  try {
+    text = fs.readFileSync(logPath, "utf8");
+  } catch {
+  }
+  const fatal = text.match(
+    /^FATAL: unhandled exception (0x[0-9a-f]+)[^\n]*?on thread \d+ '([^']*)'/im
+  );
+  const rip = text.match(/^\s*rip \S+ (\S+)/m);
+  if (fatal) {
+    const fault = describeCode(parseInt(fatal[1], 16));
+    const where = rip ? ` at ${rip[1]}` : "";
+    const thread = fatal[2] ? `, thread '${fatal[2]}'` : "";
+    return `crashed (${fault})${where}${thread}`;
+  }
+  if (signal) return `killed by ${signal}`;
+  if (code === null) return "exited without an exit code";
+  if (code === 0) return "exited immediately with code 0";
+  if (code < 0 || code >= 3221225472) return `crashed (${describeCode(code)})`;
+  const tail = text.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-3).join(" · ");
+  return tail ? `exited with code ${code} — ${tail}` : `exited with code ${code}`;
+}
+async function probeLaunch(exePath, cwd, ms = 1e4) {
+  try {
+    const tmp = os.tmpdir();
+    const cutoff = Date.now() - 60 * 60 * 1e3;
+    for (const file of fs.readdirSync(tmp)) {
+      if (!file.startsWith(LOG_PREFIX)) continue;
+      const full = path.join(tmp, file);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { force: true });
+      } catch {
+      }
+    }
+  } catch {
+  }
+  const logPath = path.join(
+    os.tmpdir(),
+    `${LOG_PREFIX}${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.log`
+  );
+  let logFd = null;
+  try {
+    logFd = fs.openSync(logPath, "w");
+  } catch {
+    logFd = null;
+  }
+  const closeLog = () => {
+    if (logFd !== null) {
+      try {
+        fs.closeSync(logFd);
+      } catch {
+      }
+      logFd = null;
+    }
+  };
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const finish = (probe) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      closeLog();
+      try {
+        fs.rmSync(logPath, { force: true });
+      } catch {
+      }
+      resolve(probe);
+    };
+    let child;
+    try {
+      child = child_process.spawn(exePath, [], {
+        cwd,
+        detached: true,
+        stdio: logFd !== null ? ["ignore", logFd, logFd] : "ignore",
+        windowsHide: false
+      });
+    } catch (error) {
+      finish({ state: "failed", detail: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    child.on("error", (error) => {
+      finish({ state: "failed", detail: error.message });
+    });
+    child.unref();
+    child.on("exit", (code, signal) => {
+      if (timer) clearTimeout(timer);
+      setTimeout(() => {
+        finish({ state: "failed", detail: summarizeExit(code, signal, logPath) });
+      }, 150);
+    });
+    timer = setTimeout(() => {
+      finish({ state: "works", detail: `still running after ${Math.round(ms / 1e3)}s` });
+    }, ms);
+  });
 }
 function isBackup(name) {
   return name.endsWith(".esbak");
@@ -856,7 +1147,7 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     await fs.promises.rm(installDir, { recursive: true, force: true });
     ensureDir(installDir);
     const entries = (await fs.promises.readdir(dumpRoot, { withFileTypes: true })).filter(
-      (entry) => !isBackup(entry.name)
+      (entry) => !isBackup(entry.name) && !isBackupName(entry.name)
     );
     let total = 0;
     for (const entry of entries) total += await dirSize(path.join(dumpRoot, entry.name));
@@ -866,7 +1157,6 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     for (const entry of entries) {
       const src = path.join(dumpRoot, entry.name);
       const dest = path.join(installDir, entry.name);
-      const stat = await fs.promises.stat(src);
       const tick = (n) => {
         copied += n;
         const pct = total > 0 ? 8 + Math.min(42, copied / total * 42) : 8;
@@ -876,14 +1166,32 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
           emit(`Copying ${entry.name}…`, pct, "copying");
         }
       };
-      if (entry.isDirectory()) await copyDir(src, dest, tick);
-      else if (entry.isFile()) {
-        await fs.promises.copyFile(src, dest);
-        tick(stat.size);
+      if (entry.isDirectory()) {
+        await copyDir(src, dest, tick);
+        continue;
+      }
+      try {
+        const followed = await fs.promises.stat(src);
+        if (followed.isDirectory()) {
+          await copyDir(src, dest, tick);
+        } else {
+          await fs.promises.copyFile(src, dest);
+          tick(followed.size);
+        }
+      } catch (error) {
+        throw new Error(
+          `Could not copy "${entry.name}" from the dump — ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     }
     const ebootDest = path.join(installDir, "eboot.bin");
     const inputElf = path.join(installDir, "input.elf");
+    if (detectContainer(ebootDest) === "unknown") {
+      const sourceEboot = path.join(dumpRoot, "eboot.bin");
+      if (detectContainer(sourceEboot) !== "unknown") {
+        await fs.promises.copyFile(sourceEboot, ebootDest);
+      }
+    }
     const ebootKind = detectContainer(ebootDest);
     if (ebootKind === "self") {
       emit("Unwrapping eboot (SELF → ELF)…", 55, "unwrapping-eboot");
@@ -896,6 +1204,17 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       );
     }
     emit("Preparing modules…", 60, "preparing-modules");
+    const singularDir = path.join(installDir, "sce_module");
+    const pluralDir = path.join(installDir, "sce_modules");
+    if (fs.existsSync(singularDir) && fs.existsSync(pluralDir)) {
+      for (const entry of await fs.promises.readdir(pluralDir, { withFileTypes: true })) {
+        const from = path.join(pluralDir, entry.name);
+        const to = path.join(singularDir, entry.name);
+        if (fs.existsSync(to)) await fs.promises.rm(from, { recursive: true, force: true });
+        else await fs.promises.rename(from, to);
+      }
+      await fs.promises.rm(pluralDir, { recursive: true, force: true });
+    }
     const prxDirs = [];
     const moduleDirs = [];
     const scanForModules = async (dir, rel, depth) => {
@@ -930,6 +1249,26 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
         if (isBackupName(file)) {
           await fs.promises.rm(path.join(dir, file), { force: true });
         }
+      }
+    }
+    const pickup = [];
+    for (const rel of prxDirs) {
+      const dir = path.join(installDir, rel);
+      for (const file of await fs.promises.readdir(dir).catch(() => [])) {
+        const kind = detectContainer(path.join(dir, file));
+        if (kind !== "elf" && kind !== "self") continue;
+        pickup.push({ rel, file, folded: file.toLowerCase() });
+      }
+    }
+    const keepRel = /* @__PURE__ */ new Map();
+    for (const item of pickup) {
+      const current = keepRel.get(item.folded);
+      const better = current === void 0 || moduleDirRank(item.rel) < moduleDirRank(current) || moduleDirRank(item.rel) === moduleDirRank(current) && item.rel < current;
+      if (better) keepRel.set(item.folded, item.rel);
+    }
+    for (const item of pickup) {
+      if (keepRel.get(item.folded) !== item.rel) {
+        await fs.promises.rm(path.join(installDir, item.rel, item.file), { force: true });
       }
     }
     for (const rel of prxDirs) {
@@ -998,6 +1337,13 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     });
     activeStages.delete(stageName);
     stageDir = null;
+    emit("Launch test — starting the game…", 97, "launch-test");
+    let probe = { state: "failed", detail: "the launch test could not start" };
+    try {
+      probe = await probeLaunch(path.join(finalDir, path.basename(exePath)), finalDir);
+    } catch (error) {
+      probe = { state: "failed", detail: error instanceof Error ? error.message : String(error) };
+    }
     const sizeBytes = await dirSize(finalDir);
     const game = {
       id,
@@ -1009,10 +1355,22 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       sizeBytes,
       cover,
       status: "ready",
-      installedAt: Date.now()
+      installedAt: Date.now(),
+      launchState: probe.state,
+      launchDetail: probe.detail
     };
     await addGame(game);
-    report({ jobId, step: "done", message: "Ready to play", percent: 100, status: "done", gameId: id, gameName: name });
+    report({
+      jobId,
+      step: "done",
+      message: probe.state === "works" ? "Installed — launch test passed, the game is running" : "Installed — launch test failed",
+      percent: 100,
+      status: "done",
+      gameId: id,
+      gameName: name,
+      launchState: probe.state,
+      launchDetail: probe.detail
+    });
     return game;
   } catch (error) {
     if (tempDir) await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
@@ -1506,7 +1864,7 @@ function registerIpc(getWindow) {
     const win = getWindow();
     const options = {
       properties: ["openFile"],
-      filters: [{ name: "PS5 dump archive", extensions: ["zip"] }]
+      filters: [{ name: "PS5 dump archive", extensions: ["zip", "rar", "7z"] }]
     };
     const result = win ? await electron.dialog.showOpenDialog(win, options) : await electron.dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];

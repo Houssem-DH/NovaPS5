@@ -20,6 +20,10 @@ export interface Game {
   error?: string
   installedAt: number
   lastPlayedAt?: number
+  /** Post-install launch test outcome ('works' | 'failed'), untested when absent. */
+  launchState?: 'works' | 'failed'
+  /** Human-readable detail from the launch test (exit code, fault info). */
+  launchDetail?: string
 }
 
 export interface LibraryData {
@@ -35,6 +39,7 @@ export type InstallStep =
   | 'relinking'
   | 'building-layout'
   | 'finalizing'
+  | 'launch-test'
   | 'done'
 
 export type InstallStatus = 'running' | 'done' | 'error'
@@ -50,10 +55,13 @@ export interface InstallProgress {
   gameId?: string
   gameName?: string
   error?: string
+  /** Post-install launch test outcome (set on the done report). */
+  launchState?: 'works' | 'failed'
+  launchDetail?: string
 }
 
 export interface ImportRequest {
-  /** Path to a dump folder, or a .zip containing one. */
+  /** Path to a dump folder, or a .zip/.rar/.7z archive containing one. */
   sourcePath: string
   /** Optional override for the display name. */
   name?: string

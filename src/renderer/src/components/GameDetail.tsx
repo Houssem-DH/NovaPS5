@@ -43,6 +43,12 @@ export function GameDetail() {
         <div className="flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="success">Ready to play</Badge>
+            {game.launchState === 'works' && (
+              <Badge variant="success">Launch test passed</Badge>
+            )}
+            {game.launchState === 'failed' && (
+              <Badge variant="destructive">Launch test failed</Badge>
+            )}
             {game.titleId && <Badge variant="secondary">{game.titleId}</Badge>}
           </div>
 
@@ -70,6 +76,17 @@ export function GameDetail() {
             <Meta label="Title ID" value={game.titleId ?? 'Unknown'} />
             <Meta label="Installed" value={timeAgo(game.installedAt)} />
             <Meta label="Last played" value={timeAgo(game.lastPlayedAt)} />
+            {game.launchState && (
+              <Meta
+                label="Launch test"
+                wide
+                value={
+                  game.launchState === 'works'
+                    ? 'Passed — the game started and kept running.'
+                    : `Failed — ${game.launchDetail ?? 'the game did not start.'}`
+                }
+              />
+            )}
             <Meta label="Install folder" value={game.installPath} wide />
           </dl>
 

@@ -107,10 +107,13 @@ export async function readMeta(
   return { name, titleId, hasCover }
 }
 
-/** Extract a .zip archive using the Windows bsdtar (arg-based, no injection). */
-async function extractZip(zip: string, dest: string): Promise<void> {
+/**
+ * Extract a dump archive (.zip, .rar, .7z) using the Windows bsdtar —
+ * libarchive-based, so all three formats work with the same invocation.
+ */
+async function extractArchive(archive: string, dest: string): Promise<void> {
   await fsp.mkdir(dest, { recursive: true })
-  const { code, stderr } = await run('tar', ['-xf', zip, '-C', dest], {
+  const { code, stderr } = await run('tar', ['-xf', archive, '-C', dest], {
     timeoutMs: 30 * 60 * 1000
   })
   if (code !== 0) {
@@ -119,16 +122,16 @@ async function extractZip(zip: string, dest: string): Promise<void> {
 }
 
 /**
- * Resolve a user-supplied path (folder or .zip) to a dump root. If a zip was
- * extracted, `tempDir` holds the extraction directory and the caller must
- * delete it when finished.
+ * Resolve a user-supplied path (folder or .zip/.rar/.7z archive) to a dump
+ * root. If an archive was extracted, `tempDir` holds the extraction directory
+ * and the caller must delete it when finished.
  */
 export async function resolveSource(
   sourcePath: string
 ): Promise<{ root: string; tempDir: string | null }> {
-  if (/\.zip$/i.test(sourcePath)) {
+  if (/\.(zip|rar|7z)$/i.test(sourcePath)) {
     const tempDir = path.join(app.getPath('temp'), `ps5lib-${Date.now()}-${Math.floor(Math.random() * 1e6)}`)
-    await extractZip(sourcePath, tempDir)
+    await extractArchive(sourcePath, tempDir)
     const root = (await locateDumpRoot(tempDir)) ?? tempDir
     return { root, tempDir }
   }

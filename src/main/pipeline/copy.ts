@@ -24,26 +24,36 @@ export async function dirSize(target: string): Promise<number> {
 
 /**
  * Recursively copy a directory, invoking `onBytes` with each file's size as it
- * is copied so the caller can report progress. Symlinks in the source are
- * skipped (a dump should not contain any, and following them is unsafe).
+ * is copied so the caller can report progress. Symlinked files/folders are
+ * copied by content (dumps repacked by archivers occasionally contain them);
+ * unreadable entries are skipped rather than failing the whole install.
  */
 export async function copyDir(
   src: string,
   dest: string,
-  onBytes: (n: number) => void
+  onBytes: (n: number) => void,
+  depth = 0
 ): Promise<void> {
+  if (depth > 32) return // link-cycle guard
   await fsp.mkdir(dest, { recursive: true })
   const entries = await fsp.readdir(src, { withFileTypes: true })
   for (const entry of entries) {
-    if (entry.isSymbolicLink()) continue
     const from = path.join(src, entry.name)
     const to = path.join(dest, entry.name)
     if (entry.isDirectory()) {
-      await copyDir(from, to, onBytes)
-    } else if (entry.isFile()) {
-      const stat = await fsp.stat(from)
-      await fsp.copyFile(from, to)
-      onBytes(stat.size)
+      await copyDir(from, to, onBytes, depth + 1)
+      continue
+    }
+    try {
+      const followed = await fsp.stat(from) // follows symlinks
+      if (followed.isDirectory()) {
+        await copyDir(from, to, onBytes, depth + 1)
+      } else {
+        await fsp.copyFile(from, to)
+        onBytes(followed.size)
+      }
+    } catch {
+      // e.g. a broken link inside the dump — skip it, keep installing.
     }
   }
 }

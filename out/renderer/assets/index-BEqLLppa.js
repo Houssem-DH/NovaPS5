@@ -17674,6 +17674,14 @@ function GameCard({ game, index }) {
             }
           ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback flex h-full w-full items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-12 w-12 text-muted-foreground/30" }) }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-t from-black/85 via-black/15 to-transparent" }),
+          game.launchState && /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "span",
+            {
+              className: `absolute left-2 top-2 z-10 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-sm ${game.launchState === "works" ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40" : "bg-red-500/20 text-red-300 ring-1 ring-red-400/40"}`,
+              title: game.launchDetail,
+              children: game.launchState === "works" ? "✓ Works" : "✗ Not working"
+            }
+          ),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 backdrop-blur-[1px] transition-opacity duration-300 group-hover:opacity-100", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
@@ -17826,6 +17834,8 @@ function GameDetail() {
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "success", children: "Ready to play" }),
+          game.launchState === "works" && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "success", children: "Launch test passed" }),
+          game.launchState === "failed" && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "destructive", children: "Launch test failed" }),
           game.titleId && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "secondary", children: game.titleId })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "mt-3 text-3xl font-semibold tracking-tight", children: game.name }),
@@ -17855,6 +17865,14 @@ function GameDetail() {
           /* @__PURE__ */ jsxRuntimeExports.jsx(Meta, { label: "Title ID", value: game.titleId ?? "Unknown" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(Meta, { label: "Installed", value: timeAgo(game.installedAt) }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(Meta, { label: "Last played", value: timeAgo(game.lastPlayedAt) }),
+          game.launchState && /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Meta,
+            {
+              label: "Launch test",
+              wide: true,
+              value: game.launchState === "works" ? "Passed — the game started and kept running." : `Failed — ${game.launchDetail ?? "the game did not start."}`
+            }
+          ),
           /* @__PURE__ */ jsxRuntimeExports.jsx(Meta, { label: "Install folder", value: game.installPath, wide: true })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex items-start gap-2 rounded-lg border border-border/60 bg-card/50 p-3 text-xs text-muted-foreground", children: [
@@ -20364,7 +20382,7 @@ const Progress = reactExports.forwardRef(({ className, value, indicatorClassName
 ));
 Progress.displayName = Progress$1.displayName;
 function InstallDialog() {
-  const { installOpen, setInstallOpen, installing, setInstalling, load } = useLibrary();
+  const { installOpen, setInstallOpen, installing, setInstalling, load, launch } = useLibrary();
   const [source, setSource] = reactExports.useState(null);
   const [detect, setDetect] = reactExports.useState(null);
   const [scanning, setScanning] = reactExports.useState(false);
@@ -20400,13 +20418,10 @@ function InstallDialog() {
   reactExports.useEffect(() => {
     if (!done) return;
     load();
-    const timer = setTimeout(() => {
-      reset();
-      setInstallOpen(false);
-    }, 1800);
-    return () => clearTimeout(timer);
   }, [done]);
   const showProgress = installing && (running || done || failed);
+  const works = done && installing?.launchState === "works";
+  const launchFailed = done && installing?.launchState === "failed";
   return /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open: installOpen, onOpenChange: handleOpenChange, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle, { children: "Install a game" }),
@@ -20414,10 +20429,15 @@ function InstallDialog() {
     ] }),
     showProgress ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4 py-2", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3", children: [
-        done ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "h-6 w-6 shrink-0 text-emerald-400" }) : failed ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-6 w-6 shrink-0 animate-spin text-primary" }),
+        done ? launchFailed ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "h-6 w-6 shrink-0 text-emerald-400" }) : failed ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-6 w-6 shrink-0 animate-spin text-primary" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-sm font-medium", children: done ? "Installed — ready to play" : failed ? "Conversion failed" : installing?.message }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-sm font-medium", children: done ? launchFailed ? "Installed — launch test failed" : works ? "Installed — launch test passed" : "Installed — ready to play" : failed ? "Conversion failed" : installing?.message }),
           installing?.gameName && done && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "truncate text-xs text-muted-foreground", children: installing.gameName }),
+          done && launchFailed && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 break-all text-xs text-red-300", children: [
+            "The game did not start: ",
+            installing?.launchDetail
+          ] }),
+          done && works && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-emerald-300/90", children: "The game started and kept running — it works." }),
           failed && installing?.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 break-all text-xs text-red-400/90", children: installing.error })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm tabular-nums text-muted-foreground", children: [
@@ -20426,11 +20446,35 @@ function InstallDialog() {
         ] })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsx(Progress, { value: installing?.percent ?? 0, className: "h-3" }),
-      !done && !failed && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-muted-foreground", children: "This can take a few minutes for large games. The app unwraps, relinks, and arranges everything automatically." }),
-      done && /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", className: "w-full", onClick: () => {
-        reset();
-        setInstallOpen(false);
-      }, children: "Close" }),
+      !done && !failed && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-muted-foreground", children: "This can take a few minutes for large games. The app unwraps, relinks, and arranges everything automatically — after that it launches the game once to verify it works." }),
+      done && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          Button,
+          {
+            className: "flex-1",
+            onClick: () => {
+              if (installing?.gameId) void launch(installing.gameId);
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { className: "h-4 w-4" }),
+              " ",
+              launchFailed ? "Play anyway" : "Play"
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Button,
+          {
+            variant: "outline",
+            className: "flex-1",
+            onClick: () => {
+              reset();
+              setInstallOpen(false);
+            },
+            children: "Close"
+          }
+        )
+      ] }),
       failed && /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", className: "w-full", onClick: reset, children: "Try again" })
     ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-3", children: [
@@ -20454,7 +20498,7 @@ function InstallDialog() {
             className: "flex flex-col items-center gap-2 rounded-xl border border-border/60 bg-secondary/50 p-4 text-sm font-medium transition-colors hover:border-primary/50 hover:bg-accent disabled:opacity-60",
             children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(FileArchive, { className: "h-5 w-5 text-primary" }),
-              "Select .zip archive"
+              "Select .zip / .rar / .7z"
             ]
           }
         )
