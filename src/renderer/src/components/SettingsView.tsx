@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import {
   CheckCircle2,
   Database,
+  Download,
   FolderOpen,
   Github,
   Loader2,
@@ -92,7 +93,7 @@ function Pill({ tone, children }: { tone: 'ok' | 'warn' | 'muted'; children: Rea
 }
 
 export function SettingsView() {
-  const { appInfo, refreshInfo, update, checkUpdates, setUpdateOpen } = useLibrary()
+  const { appInfo, refreshInfo, update, checkUpdates, installUpdate, setUpdateOpen } = useLibrary()
   const [checking, setChecking] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [moving, setMoving] = useState(false)
@@ -270,13 +271,20 @@ export function SettingsView() {
               </Pill>
             ) : update?.status === 'error' ? (
               <Pill tone="warn">Check failed</Pill>
+            ) : update?.status === 'ready' || update?.status === 'installing' ? (
+              <Pill tone="warn">v{update.version} ready</Pill>
             ) : update?.version ? (
               <Pill tone="warn">v{update.version} available</Pill>
             ) : undefined
           }
         />
         <Row icon={Github} label="Updates from" value={`github.com/${appInfo?.appRepo ?? 'Houssem-DH/NovaPS5'}`} />
-        <div className="px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          {update?.status === 'ready' && (
+            <Button size="sm" onClick={() => void installUpdate()}>
+              <Download className="h-3.5 w-3.5" /> Restart to update
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"

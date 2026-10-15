@@ -18124,7 +18124,7 @@ function Pill({ tone, children }) {
   );
 }
 function SettingsView() {
-  const { appInfo, refreshInfo, update, checkUpdates, setUpdateOpen } = useLibrary();
+  const { appInfo, refreshInfo, update, checkUpdates, installUpdate, setUpdateOpen } = useLibrary();
   const [checking, setChecking] = reactExports.useState(false);
   const [updating, setUpdating] = reactExports.useState(false);
   const [moving, setMoving] = reactExports.useState(false);
@@ -18266,7 +18266,11 @@ function SettingsView() {
           icon: Sparkles,
           label: "NovaPS5",
           value: appInfo ? `v${appInfo.appVersion}` : "…",
-          badge: update?.status === "current" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: /no updates published/i.test(update.message ?? "") ? "muted" : "ok", children: update.message ?? "Up to date" }) : update?.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: "warn", children: "Check failed" }) : update?.version ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { tone: "warn", children: [
+          badge: update?.status === "current" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: /no updates published/i.test(update.message ?? "") ? "muted" : "ok", children: update.message ?? "Up to date" }) : update?.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Pill, { tone: "warn", children: "Check failed" }) : update?.status === "ready" || update?.status === "installing" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { tone: "warn", children: [
+            "v",
+            update.version,
+            " ready"
+          ] }) : update?.version ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Pill, { tone: "warn", children: [
             "v",
             update.version,
             " available"
@@ -18274,21 +18278,27 @@ function SettingsView() {
         }
       ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(Row, { icon: Github, label: "Updates from", value: `github.com/${appInfo?.appRepo ?? "Houssem-DH/NovaPS5"}` }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-4 py-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        Button,
-        {
-          variant: "secondary",
-          size: "sm",
-          onClick: () => {
-            setUpdateOpen(true);
-            void checkUpdates();
-          },
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-3.5 w-3.5" }),
-            " Check for updates"
-          ]
-        }
-      ) })
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2 px-4 py-3", children: [
+        update?.status === "ready" && /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "sm", onClick: () => void installUpdate(), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { className: "h-3.5 w-3.5" }),
+          " Restart to update"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          Button,
+          {
+            variant: "secondary",
+            size: "sm",
+            onClick: () => {
+              setUpdateOpen(true);
+              void checkUpdates();
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-3.5 w-3.5" }),
+              " Check for updates"
+            ]
+          }
+        )
+      ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(Section, { title: "About", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel space-y-3 p-4 text-xs leading-relaxed text-muted-foreground", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { children: [
@@ -20869,7 +20879,7 @@ function UpdateButton() {
       case "downloading":
         return { icon: Download, label: `Downloading ${percent2}%`, tone: "text-primary" };
       case "ready":
-        return { icon: Download, label: `v${version} ready`, tone: "text-primary" };
+        return { icon: Download, label: `Restart to update v${version}`, tone: "text-primary" };
       case "installing":
         return { icon: LoaderCircle, label: "Restarting to update…", tone: "text-primary" };
       case "error":
@@ -21224,8 +21234,8 @@ function UpdateDialog() {
     if (whatsNew) void dismissWhatsNew();
     setUpdateOpen(false);
   };
-  const heading = whatsNew ? `Updated to NovaPS5 v${whatsNew.version}` : status === "checking" ? "Checking for updates" : status === "current" ? "You're up to date" : status === "error" ? "Could not check for updates" : version ? `NovaPS5 v${version} is available` : "Application updates";
-  const blurb = whatsNew ? "The app restarted into the new version. Here is what changed." : status === "checking" ? "Looking for a newer NovaPS5 release on GitHub." : status === "current" ? `NovaPS5 v${currentVersion} is the newest release.` : status === "error" ? update?.detail ?? "The update server could not be reached." : status === "downloading" ? `Downloading the update — ${percent2}%. NovaPS5 restarts itself when it is ready.` : status === "ready" || status === "installing" ? "The update is downloaded. NovaPS5 restarts to install it." : "Updates come from this app’s GitHub releases.";
+  const heading = whatsNew ? `Updated to NovaPS5 v${whatsNew.version}` : status === "checking" ? "Checking for updates" : status === "current" ? "You're up to date" : status === "error" ? "Could not check for updates" : status === "ready" ? `NovaPS5 v${version} is ready to install` : version ? `NovaPS5 v${version} is available` : "Application updates";
+  const blurb = whatsNew ? "The app restarted into the new version. Here is what changed." : status === "checking" ? "Looking for a newer NovaPS5 release on GitHub." : status === "current" ? `NovaPS5 v${currentVersion} is the newest release.` : status === "error" ? update?.detail ?? "The update server could not be reached." : status === "downloading" ? `Downloading the update — ${percent2}%. Nothing restarts on its own; you decide when to install it.` : status === "ready" ? "The update is downloaded and waiting. Restart to update when it suits you — NovaPS5 will not restart on its own." : status === "installing" ? "Restarting to install the update. NovaPS5 will be back in a moment." : "Updates come from this app’s GitHub releases.";
   const Icon2 = whatsNew ? CircleCheck : status === "checking" || status === "installing" ? LoaderCircle : status === "current" ? CircleCheck : status === "error" ? TriangleAlert : status === "downloading" || status === "ready" ? Download : Sparkles;
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     Dialog,
@@ -21276,7 +21286,10 @@ function UpdateDialog() {
               /* @__PURE__ */ jsxRuntimeExports.jsx(ArrowUpRight, { className: "h-3.5 w-3.5" }),
               " Release notes"
             ] }),
-            whatsNew ? /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", onClick: close, children: "Got it" }) : status === "ready" || status === "installing" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", onClick: () => void installUpdate(), children: "Restart now" }) : status === "downloading" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "sm", disabled: true, children: [
+            whatsNew ? /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", onClick: close, children: "Got it" }) : status === "ready" || status === "installing" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "sm", onClick: () => void installUpdate(), children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { className: "h-3.5 w-3.5" }),
+              " Restart to update"
+            ] }) : status === "downloading" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "sm", disabled: true, children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-3.5 w-3.5 animate-spin" }),
               " Downloading…"
             ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [

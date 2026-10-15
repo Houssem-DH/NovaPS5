@@ -41,10 +41,11 @@ the game, then **launches it once to tell you whether it works**. No command lin
 - **Runtime updates.** The conversion runtime is fetched from AnyPS5 releases and refreshed
   automatically; Settings shows *Up to date* with an on-demand **Scan for updates**.
 - **Python is bundled.** End users never install Python — the interpreter ships inside the app.
-- **Updates itself.** The header shows the update state and checks GitHub on every launch. A newer
-  release downloads in the background, installs by itself, restarts NovaPS5 and opens a **What's new**
-  dialog with the version that landed and the release notes you published. Closing the window parks the
-  app in the tray so an update never interrupts you.
+- **Updates itself — but only when you say so.** The header shows the update state and checks GitHub on
+  every launch. A newer release downloads in the background and then waits: nothing installs on its own,
+  not even when you quit the app. Click **Restart to update** (header, dialog or Settings) whenever it
+  suits you; NovaPS5 installs the update, restarts and opens a **What's new** dialog with the release
+  notes you published.
 
 ## Requirements
 
@@ -115,8 +116,9 @@ The app updates itself from this repository's **GitHub Releases** (see `build.pu
    ```
 
 5. Publish the release. Existing installs pick it up on their next launch (or from the header control
-   / **Settings ▸ Application updates**), download it in the background, then restart into the new
-   version and show what changed.
+   / **Settings ▸ Application updates**), download it in the background, then **wait**. The update only
+   installs when the user clicks **Restart to update** — nothing restarts on its own, and quitting the
+   app leaves the downloaded update for the next explicit click.
 
 Notes:
 
@@ -125,6 +127,8 @@ Notes:
 - To exercise the real check from a source build, set `NOVAPS5_DEV_UPDATES=1` before `npm run dev`
   (it reads `dev-app-update.yml`). Without it, source builds report that checks are for installed builds.
 - Update state lives in `updates.json` under the app's user-data folder (`%APPDATA%\NovaPS5`).
+- `autoInstallOnAppQuit` is deliberately off, so a quit never installs a pending update behind the
+  user's back.
 
 ## How an install works
 
