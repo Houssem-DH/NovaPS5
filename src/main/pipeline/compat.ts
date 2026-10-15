@@ -1,7 +1,7 @@
 import fs from 'fs'
 import { promises as fsp } from 'fs'
 import path from 'path'
-import { detectContainer } from './elf'
+import { detectContainer, readMagicHex } from './elf'
 import { readMeta } from './dump'
 import { findPython } from '../python'
 import { toolingPresent } from '../paths'
@@ -110,11 +110,15 @@ export async function checkCompatibility(root: string): Promise<CompatReport> {
       detail: 'eboot.bin not found — this folder is not a complete dump.'
     })
   } else {
+    const bytes = readMagicHex(eboot)
     checks.push({
       id: 'eboot',
       label: 'Executable',
       status: 'fail',
-      detail: 'eboot.bin is not a recognized ELF or SELF file — the dump looks corrupted or still encrypted.'
+      detail:
+        bytes === 'empty' || bytes === 'unreadable'
+          ? `eboot.bin is ${bytes} — the dump is incomplete; re-copy or re-extract it.`
+          : `eboot.bin is not a recognized ELF or SELF file (first bytes: ${bytes}) — the file is truncated, corrupted, or not an eboot.`
     })
   }
 

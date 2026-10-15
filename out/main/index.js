@@ -181,6 +181,7 @@ async function launchGame(id) {
   }
 }
 const SELF_MAGIC = Buffer.from([79, 21, 61, 29]);
+const SELF_KERNEL_MAGIC = Buffer.from([84, 20, 245, 238]);
 const ELF_MAGIC$1 = Buffer.from([127, 69, 76, 70]);
 const PE_MAGIC = Buffer.from([77, 90]);
 function detectContainer(file) {
@@ -191,11 +192,30 @@ function detectContainer(file) {
     const read = fs.readSync(fd, buf, 0, 4, 0);
     if (read < 2) return "unknown";
     if (buf.subarray(0, 4).equals(ELF_MAGIC$1)) return "elf";
-    if (buf.subarray(0, 4).equals(SELF_MAGIC)) return "self";
+    if (buf.subarray(0, 4).equals(SELF_MAGIC) || buf.subarray(0, 4).equals(SELF_KERNEL_MAGIC)) return "self";
     if (buf.subarray(0, 2).equals(PE_MAGIC)) return "pe";
     return "unknown";
   } catch {
     return "unknown";
+  } finally {
+    if (fd !== void 0) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+      }
+    }
+  }
+}
+function readMagicHex(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const buf = Buffer.alloc(4);
+    const read = fs.readSync(fd, buf, 0, 4, 0);
+    if (read <= 0) return "empty";
+    return Array.from(buf.subarray(0, read)).map((byte) => byte.toString(16).toUpperCase().padStart(2, "0")).join(" ");
+  } catch {
+    return "unreadable";
   } finally {
     if (fd !== void 0) {
       try {
@@ -503,11 +523,12 @@ async function checkCompatibility(root) {
       detail: "eboot.bin not found — this folder is not a complete dump."
     });
   } else {
+    const bytes = readMagicHex(eboot);
     checks.push({
       id: "eboot",
       label: "Executable",
       status: "fail",
-      detail: "eboot.bin is not a recognized ELF or SELF file — the dump looks corrupted or still encrypted."
+      detail: bytes === "empty" || bytes === "unreadable" ? `eboot.bin is ${bytes} — the dump is incomplete; re-copy or re-extract it.` : `eboot.bin is not a recognized ELF or SELF file (first bytes: ${bytes}) — the file is truncated, corrupted, or not an eboot.`
     });
   }
   if (kind === "self") {
