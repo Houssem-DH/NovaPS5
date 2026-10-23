@@ -7154,7 +7154,7 @@ const { useDebugValue } = React$2;
 const { useSyncExternalStoreWithSelector } = useSyncExternalStoreExports;
 let didWarnAboutEqualityFn = false;
 const identity = (arg) => arg;
-function useStore(api, selector = identity, equalityFn) {
+function useStore$1(api, selector = identity, equalityFn) {
   if ((__vite_import_meta_env__ ? "production" : void 0) !== "production" && equalityFn && !didWarnAboutEqualityFn) {
     console.warn(
       "[DEPRECATED] Use `createWithEqualityFn` instead of `create` or use `useStoreWithEqualityFn` instead of `useStore`. They can be imported from 'zustand/traditional'. https://github.com/pmndrs/zustand/discussions/1937"
@@ -7178,12 +7178,23 @@ const createImpl = (createState2) => {
     );
   }
   const api = typeof createState2 === "function" ? createStore(createState2) : createState2;
-  const useBoundStore = (selector, equalityFn) => useStore(api, selector, equalityFn);
+  const useBoundStore = (selector, equalityFn) => useStore$1(api, selector, equalityFn);
   Object.assign(useBoundStore, api);
   return useBoundStore;
 };
 const create = (createState2) => createState2 ? createImpl(createState2) : createImpl;
-const useLibrary = create((set, get) => ({
+function graphicsApi() {
+  if (typeof window.api?.setGameGraphics !== "function" || typeof window.api?.setGameCompatibility !== "function" || typeof window.api?.trophyPackage !== "function" || typeof window.api?.clearShaderCache !== "function" || typeof window.api?.session !== "function" || typeof window.api?.performance !== "function" || typeof window.api?.displays !== "function") {
+    throw new Error(
+      "NovaPS5 is running an older preload script. Fully quit and restart the app (in development, stop and restart `npm run dev`) to load the game settings API."
+    );
+  }
+  return window.api;
+}
+function graphicsBridge() {
+  return graphicsApi();
+}
+const useLibrary = create((set) => ({
   games: [],
   loading: true,
   appInfo: null,
@@ -7230,8 +7241,22 @@ const useLibrary = create((set, get) => ({
       selectedId: state.selectedId === id2 ? null : state.selectedId,
       view: state.selectedId === id2 ? "library" : state.view
     }));
-    void get();
   },
+  setGraphics: async (id2, patch) => {
+    const updated = await graphicsApi().setGameGraphics(id2, patch);
+    set((state) => ({
+      games: state.games.map((game) => game.id === id2 ? updated : game)
+    }));
+    return updated;
+  },
+  setCompatibility: async (id2, patch) => {
+    const updated = await graphicsApi().setGameCompatibility(id2, patch);
+    set((state) => ({
+      games: state.games.map((game) => game.id === id2 ? updated : game)
+    }));
+    return updated;
+  },
+  clearShaderCache: (id2) => graphicsApi().clearShaderCache(id2),
   setUpdate: (update) => set({ update }),
   setUpdateOpen: (updateOpen) => set({ updateOpen }),
   checkUpdates: async () => {
@@ -7254,6 +7279,154 @@ function selectedGame() {
   const { games, selectedId } = useLibrary.getState();
   return games.find((game) => game.id === selectedId);
 }
+const PAGE_SIZE = 36;
+let pageRequest = 0;
+function featuredKey(settings) {
+  return `${settings?.region ?? ""}|${settings?.catalogUrl ?? ""}`;
+}
+function message(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/^Error invoking remote method '[^']+':\s*/, "").replace(/^Error:\s*/, "");
+}
+function dedupeGames(games) {
+  const seen = /* @__PURE__ */ new Set();
+  return games.filter((game) => {
+    if (seen.has(game.id)) return false;
+    seen.add(game.id);
+    return true;
+  });
+}
+const useStore = create((set, get) => ({
+  regions: [],
+  settings: null,
+  entries: [],
+  featured: [],
+  games: [],
+  total: 0,
+  offset: 0,
+  hasMore: false,
+  query: "",
+  genre: "",
+  mode: "discover",
+  loading: true,
+  loadingMore: false,
+  loaded: false,
+  error: null,
+  activeGame: null,
+  progress: {},
+  load: async () => {
+    if (get().loaded) return;
+    set({ loading: true, error: null });
+    try {
+      const [regions, settings, entries] = await Promise.all([
+        window.api.storeRegions(),
+        window.api.storeSettings(),
+        window.api.storeLibrary()
+      ]);
+      set({ regions, settings, entries });
+      const key = featuredKey(settings);
+      void window.api.storeFeatured().then((featured) => {
+        if (featuredKey(get().settings) === key) set({ featured });
+      }).catch(() => {
+      });
+    } catch (error) {
+      set({ error: message(error) });
+    }
+    await get().fetchPage(true);
+    set({ loading: false, loaded: true });
+  },
+  fetchPage: async (reset = true) => {
+    const request = ++pageRequest;
+    const { query, genre, offset } = get();
+    const pageOffset = reset ? 0 : offset;
+    set(reset ? { loading: true, error: null } : { loadingMore: true });
+    try {
+      const result = query.trim() ? await window.api.storeSearch({
+        text: query.trim(),
+        genre: genre || void 0,
+        offset: pageOffset,
+        size: PAGE_SIZE
+      }) : await window.api.storeBrowse({
+        genre: genre || void 0,
+        offset: pageOffset,
+        size: PAGE_SIZE
+      });
+      if (request !== pageRequest) return;
+      set((state) => ({
+        games: reset ? result.games : dedupeGames([...state.games, ...result.games]),
+        total: result.total,
+        offset: result.offset + result.size,
+        hasMore: result.hasMore,
+        error: result.error ?? null
+      }));
+    } catch (error) {
+      if (request !== pageRequest) return;
+      set({ error: message(error), ...reset ? { games: [], hasMore: false } : {} });
+    } finally {
+      if (request === pageRequest) set({ loading: false, loadingMore: false });
+    }
+  },
+  setQuery: (query) => set({ query }),
+  setGenre: (genre) => set({ genre }),
+  setMode: (mode) => set({ mode }),
+  loadMore: async () => {
+    if (get().loading || get().loadingMore || !get().hasMore) return;
+    await get().fetchPage(false);
+  },
+  refreshLibrary: async () => {
+    const entries = await window.api.storeLibrary();
+    set({ entries });
+  },
+  addToLibrary: async (game) => {
+    const entries = await window.api.storeAdd(game);
+    set({ entries });
+  },
+  removeFromLibrary: async (id2) => {
+    const entries = await window.api.storeRemove(id2);
+    set((state) => ({
+      entries,
+      activeGame: state.activeGame?.id === id2 ? null : state.activeGame
+    }));
+  },
+  setDownloadUrl: async (id2, url) => {
+    const entries = await window.api.storeSetDownload(id2, url);
+    set((state) => ({
+      entries,
+      activeGame: state.activeGame && state.activeGame.id === id2 ? { ...state.activeGame, downloadUrl: url?.trim() || null } : state.activeGame
+    }));
+  },
+  download: async (id2, url) => {
+    await window.api.storeDownload(id2, url);
+    await get().refreshLibrary();
+  },
+  installLocal: async (id2, sourcePath) => {
+    await window.api.storeInstallLocal(id2, sourcePath);
+  },
+  saveSettings: async (patch) => {
+    set({ loading: true, error: null });
+    try {
+      const settings = await window.api.storeSetSettings(patch);
+      const entries = await window.api.storeLibrary();
+      set({ settings, entries, featured: [] });
+      const key = featuredKey(settings);
+      void window.api.storeFeatured().then((featured) => {
+        if (featuredKey(get().settings) === key) set({ featured });
+      }).catch(() => {
+      });
+      await get().fetchPage(true);
+    } catch (error) {
+      set({ error: message(error) });
+      throw error;
+    } finally {
+      set({ loading: false });
+    }
+  },
+  openGame: (game) => set({ activeGame: game }),
+  setProgress: (progress2) => set((state) => ({
+    progress: { ...state.progress, [progress2.gameId]: progress2 }
+  })),
+  entryFor: (id2) => get().entries.find((entry) => entry.game.id === id2)
+}));
 /**
  * @license lucide-react v0.417.0 - ISC
  *
@@ -7341,6 +7514,21 @@ const createLucideIcon = (iconName, iconNode) => {
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const Activity = createLucideIcon("Activity", [
+  [
+    "path",
+    {
+      d: "M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2",
+      key: "169zse"
+    }
+  ]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const ArrowLeft = createLucideIcon("ArrowLeft", [
   ["path", { d: "m12 19-7-7 7-7", key: "1l729n" }],
   ["path", { d: "M19 12H5", key: "x3x0zl" }]
@@ -7355,6 +7543,13 @@ const ArrowUpRight = createLucideIcon("ArrowUpRight", [
   ["path", { d: "M7 7h10v10", key: "1tivn9" }],
   ["path", { d: "M7 17 17 7", key: "1vkiza" }]
 ]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Check = createLucideIcon("Check", [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]]);
 /**
  * @license lucide-react v0.417.0 - ISC
  *
@@ -7383,6 +7578,22 @@ const CircleX = createLucideIcon("CircleX", [
  * See the LICENSE file in the root directory of this source tree.
  */
 const Circle = createLucideIcon("Circle", [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Compass = createLucideIcon("Compass", [
+  [
+    "path",
+    {
+      d: "m16.24 7.76-1.804 5.411a2 2 0 0 1-1.265 1.265L7.76 16.24l1.804-5.411a2 2 0 0 1 1.265-1.265z",
+      key: "9ktpf1"
+    }
+  ],
   ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }]
 ]);
 /**
@@ -7424,6 +7635,17 @@ const Download = createLucideIcon("Download", [
   ["path", { d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", key: "ih7n3h" }],
   ["polyline", { points: "7 10 12 15 17 10", key: "2ggqvy" }],
   ["line", { x1: "12", x2: "12", y1: "15", y2: "3", key: "1vk2je" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const ExternalLink = createLucideIcon("ExternalLink", [
+  ["path", { d: "M15 3h6v6", key: "1q9fwt" }],
+  ["path", { d: "M10 14 21 3", key: "gplh6r" }],
+  ["path", { d: "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6", key: "a6xqqp" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -7482,6 +7704,16 @@ const Gamepad2 = createLucideIcon("Gamepad2", [
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const Gauge = createLucideIcon("Gauge", [
+  ["path", { d: "m12 14 4-4", key: "9kzdfg" }],
+  ["path", { d: "M3.34 19a10 10 0 1 1 17.32 0", key: "19p75a" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const Github = createLucideIcon("Github", [
   [
     "path",
@@ -7491,6 +7723,63 @@ const Github = createLucideIcon("Github", [
     }
   ],
   ["path", { d: "M9 18c-4.51 2-5-2-7-2", key: "9comsn" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Info = createLucideIcon("Info", [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
+  ["path", { d: "M12 16v-4", key: "1dtifu" }],
+  ["path", { d: "M12 8h.01", key: "e9boi3" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Keyboard = createLucideIcon("Keyboard", [
+  ["path", { d: "M10 8h.01", key: "1r9ogq" }],
+  ["path", { d: "M12 12h.01", key: "1mp3jc" }],
+  ["path", { d: "M14 8h.01", key: "1primd" }],
+  ["path", { d: "M16 12h.01", key: "1l6xoz" }],
+  ["path", { d: "M18 8h.01", key: "emo2bl" }],
+  ["path", { d: "M6 8h.01", key: "x9i8wu" }],
+  ["path", { d: "M7 16h10", key: "wp8him" }],
+  ["path", { d: "M8 12h.01", key: "czm47f" }],
+  ["rect", { width: "20", height: "16", x: "2", y: "4", rx: "2", key: "18n3k1" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Layers = createLucideIcon("Layers", [
+  [
+    "path",
+    {
+      d: "m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z",
+      key: "8b97xw"
+    }
+  ],
+  ["path", { d: "m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65", key: "dd6zsq" }],
+  ["path", { d: "m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65", key: "ep9fru" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const LayoutGrid = createLucideIcon("LayoutGrid", [
+  ["rect", { width: "7", height: "7", x: "3", y: "3", rx: "1", key: "1g98yp" }],
+  ["rect", { width: "7", height: "7", x: "14", y: "3", rx: "1", key: "6d4xhi" }],
+  ["rect", { width: "7", height: "7", x: "14", y: "14", rx: "1", key: "nxv5o0" }],
+  ["rect", { width: "7", height: "7", x: "3", y: "14", rx: "1", key: "1bb6yr" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -7512,6 +7801,29 @@ const Library = createLucideIcon("Library", [
  */
 const LoaderCircle = createLucideIcon("LoaderCircle", [
   ["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Maximize2 = createLucideIcon("Maximize2", [
+  ["polyline", { points: "15 3 21 3 21 9", key: "mznyad" }],
+  ["polyline", { points: "9 21 3 21 3 15", key: "1avn1i" }],
+  ["line", { x1: "21", x2: "14", y1: "3", y2: "10", key: "ota7mn" }],
+  ["line", { x1: "3", x2: "10", y1: "21", y2: "14", key: "1atl0r" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Monitor = createLucideIcon("Monitor", [
+  ["rect", { width: "20", height: "14", x: "2", y: "3", rx: "2", key: "48i651" }],
+  ["line", { x1: "8", x2: "16", y1: "21", y2: "21", key: "1svkeh" }],
+  ["line", { x1: "12", x2: "12", y1: "17", y2: "21", key: "vw1qmm" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -7622,6 +7934,33 @@ const Rocket = createLucideIcon("Rocket", [
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const RotateCcw = createLucideIcon("RotateCcw", [
+  ["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", key: "1357e3" }],
+  ["path", { d: "M3 3v5h5", key: "1xhq8a" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Save = createLucideIcon("Save", [
+  [
+    "path",
+    {
+      d: "M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z",
+      key: "1c8476"
+    }
+  ],
+  ["path", { d: "M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7", key: "1ydtos" }],
+  ["path", { d: "M7 3v4a1 1 0 0 0 1 1h7", key: "t51u73" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const SearchCheck = createLucideIcon("SearchCheck", [
   ["path", { d: "m8 11 2 2 4-4", key: "1sed1v" }],
   ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }],
@@ -7659,6 +7998,23 @@ const Settings = createLucideIcon("Settings", [
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const ShieldAlert = createLucideIcon("ShieldAlert", [
+  [
+    "path",
+    {
+      d: "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+      key: "oel41y"
+    }
+  ],
+  ["path", { d: "M12 8v4", key: "1got3b" }],
+  ["path", { d: "M12 16h.01", key: "1drbdi" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const ShieldCheck = createLucideIcon("ShieldCheck", [
   [
     "path",
@@ -7668,6 +8024,23 @@ const ShieldCheck = createLucideIcon("ShieldCheck", [
     }
   ],
   ["path", { d: "m9 12 2 2 4-4", key: "dzmm74" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const SlidersHorizontal = createLucideIcon("SlidersHorizontal", [
+  ["line", { x1: "21", x2: "14", y1: "4", y2: "4", key: "obuewd" }],
+  ["line", { x1: "10", x2: "3", y1: "4", y2: "4", key: "1q6298" }],
+  ["line", { x1: "21", x2: "12", y1: "12", y2: "12", key: "1iu8h1" }],
+  ["line", { x1: "8", x2: "3", y1: "12", y2: "12", key: "ntss68" }],
+  ["line", { x1: "21", x2: "16", y1: "20", y2: "20", key: "14d8ph" }],
+  ["line", { x1: "12", x2: "3", y1: "20", y2: "20", key: "m0wm8r" }],
+  ["line", { x1: "14", x2: "14", y1: "2", y2: "6", key: "14e1ph" }],
+  ["line", { x1: "8", x2: "8", y1: "10", y2: "14", key: "1i6ji0" }],
+  ["line", { x1: "16", x2: "16", y1: "18", y2: "22", key: "1lctlv" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -7704,6 +8077,17 @@ const Terminal = createLucideIcon("Terminal", [
  * This source code is licensed under the ISC license.
  * See the LICENSE file in the root directory of this source tree.
  */
+const Timer = createLucideIcon("Timer", [
+  ["line", { x1: "10", x2: "14", y1: "2", y2: "2", key: "14vaq8" }],
+  ["line", { x1: "12", x2: "15", y1: "14", y2: "11", key: "17fdiu" }],
+  ["circle", { cx: "12", cy: "14", r: "8", key: "1e1u0o" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
 const Trash2 = createLucideIcon("Trash2", [
   ["path", { d: "M3 6h18", key: "d0wm0j" }],
   ["path", { d: "M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6", key: "4alrt4" }],
@@ -7727,6 +8111,35 @@ const TriangleAlert = createLucideIcon("TriangleAlert", [
   ],
   ["path", { d: "M12 9v4", key: "juzpu7" }],
   ["path", { d: "M12 17h.01", key: "p32p05" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Trophy = createLucideIcon("Trophy", [
+  ["path", { d: "M6 9H4.5a2.5 2.5 0 0 1 0-5H6", key: "17hqa7" }],
+  ["path", { d: "M18 9h1.5a2.5 2.5 0 0 0 0-5H18", key: "lmptdp" }],
+  ["path", { d: "M4 22h16", key: "57wxv0" }],
+  ["path", { d: "M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22", key: "1nw9bq" }],
+  ["path", { d: "M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22", key: "1np0yb" }],
+  ["path", { d: "M18 2H6v7a6 6 0 0 0 12 0V2Z", key: "u46fv3" }]
+]);
+/**
+ * @license lucide-react v0.417.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const WifiOff = createLucideIcon("WifiOff", [
+  ["path", { d: "M12 20h.01", key: "zekei9" }],
+  ["path", { d: "M8.5 16.429a5 5 0 0 1 7 0", key: "1bycff" }],
+  ["path", { d: "M5 12.859a10 10 0 0 1 5.17-2.69", key: "1dl1wf" }],
+  ["path", { d: "M19 12.859a10 10 0 0 0-2.007-1.523", key: "4k23kn" }],
+  ["path", { d: "M2 8.82a15 15 0 0 1 4.177-2.643", key: "1grhjp" }],
+  ["path", { d: "M22 8.82a15 15 0 0 0-11.288-3.764", key: "z3jwby" }],
+  ["path", { d: "m2 2 20 20", key: "1ooewy" }]
 ]);
 /**
  * @license lucide-react v0.417.0 - ISC
@@ -10492,7 +10905,8 @@ function NavItem({
   icon: Icon2,
   label,
   active,
-  onClick
+  onClick,
+  badge
 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "button",
@@ -10513,17 +10927,29 @@ function NavItem({
           }
         ),
         /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: cn("h-4 w-4 transition-transform duration-200", !active && "group-hover:scale-105") }),
-        label
+        label,
+        badge ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-auto rounded-full bg-secondary px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground", children: badge }) : null
       ]
     }
   );
 }
 function Sidebar() {
   const { view, setView, setInstallOpen, appInfo } = useLibrary();
+  const storeCount = useStore((state) => state.entries.length);
   const toolsReady = !!appInfo && appInfo.relinkerPresent && appInfo.libsPresent && !!appInfo.pythonPath;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "relative flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-sm", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "flex flex-1 flex-col gap-1 p-3 pt-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(NavItem, { icon: Library, label: "Library", active: view === "library", onClick: () => setView("library") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        NavItem,
+        {
+          icon: Gamepad2,
+          label: "Games",
+          active: view === "store",
+          onClick: () => setView("store"),
+          badge: storeCount
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsx(NavItem, { icon: Settings, label: "Settings", active: view === "settings", onClick: () => setView("settings") })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3 border-t border-border/60 p-3", children: [
@@ -17694,7 +18120,7 @@ function GameCard({ game, index }) {
               title: game.error,
               children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "h-3 w-3" }),
-                " Missing"
+                " Not working"
               ]
             }
           ) : game.launchState && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -17709,11 +18135,13 @@ function GameCard({ game, index }) {
             "button",
             {
               "aria-label": `Play ${game.name}`,
+              disabled: game.status === "error",
+              title: game.status === "error" ? game.error ?? "This game is not working." : void 0,
               onClick: (e) => {
                 e.stopPropagation();
-                launch(game.id);
+                if (game.status !== "error") launch(game.id);
               },
-              className: "gradient-play flex h-16 w-16 items-center justify-center rounded-full shadow-2xl shadow-black/40 transition-transform duration-200 hover:scale-110",
+              className: "gradient-play flex h-16 w-16 items-center justify-center rounded-full shadow-2xl shadow-black/40 transition-transform duration-200 hover:scale-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100",
               children: /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { className: "h-7 w-7 translate-x-[1px] text-white", fill: "currentColor" })
             }
           ) }),
@@ -17742,8 +18170,93 @@ function GameCard({ game, index }) {
     }
   );
 }
-function GameGrid({ games }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: games.map((game, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(GameCard, { game, index }, game.id)) });
+function WishlistGameCard({ entry, index }) {
+  const openGame = useStore((state) => state.openGame);
+  const removeFromLibrary = useStore((state) => state.removeFromLibrary);
+  const progress2 = useStore((state) => state.progress[entry.game.id]);
+  const game = entry.game;
+  const running = progress2?.status === "running";
+  const percent2 = Math.max(2, Math.min(100, progress2?.percent ?? 0));
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    motion.div,
+    {
+      initial: { opacity: 0, y: 14 },
+      animate: { opacity: 1, y: 0 },
+      transition: { duration: 0.35, delay: Math.min(index * 0.03, 0.3) },
+      className: "group relative cursor-pointer",
+      onClick: () => openGame(game),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative aspect-[3/4] overflow-hidden rounded-2xl border border-border/50 bg-card transition-all duration-300 group-hover:-translate-y-1 group-hover:border-primary/50 group-hover:shadow-2xl group-hover:shadow-primary/15", children: [
+          game.coverUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "img",
+            {
+              src: game.coverUrl,
+              alt: game.name,
+              loading: "lazy",
+              draggable: false,
+              className: "h-full w-full object-cover opacity-90 saturate-[0.85] transition-transform duration-500 group-hover:scale-[1.06] group-hover:opacity-100 group-hover:saturate-100"
+            }
+          ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback flex h-full w-full items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-12 w-12 text-muted-foreground/30" }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-t from-black/95 via-black/25 to-transparent" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-100 ring-1 ring-amber-400/40 backdrop-blur-sm", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { className: "h-3 w-3" }),
+            " Not installed"
+          ] }),
+          running ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "absolute left-2 top-8 z-10 inline-flex items-center gap-1 rounded-lg bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white ring-1 ring-white/15 backdrop-blur-sm", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-3 w-3 animate-spin" }),
+            Math.round(progress2.percent),
+            "%"
+          ] }) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 backdrop-blur-[1px] transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              "aria-label": `Install ${game.name}`,
+              onClick: (event) => {
+                event.stopPropagation();
+                openGame(game);
+              },
+              className: "gradient-play inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold text-white shadow-2xl shadow-black/40 transition-transform duration-200 hover:scale-105",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { className: "h-4 w-4" }),
+                " Install"
+              ]
+            }
+          ) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute inset-x-0 bottom-0 p-3.5", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "truncate text-sm font-semibold text-white", children: game.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-1 flex items-center gap-2 text-[11px] text-white/60", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: game.publisher ?? "PS5" }),
+              game.sizeBytes ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "h-1 w-1 shrink-0 rounded-full bg-white/25" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "shrink-0", children: formatBytes(game.sizeBytes) })
+              ] }) : null
+            ] })
+          ] }),
+          running ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-x-0 bottom-0 h-1 bg-black/50", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "div",
+            {
+              className: "h-full bg-primary transition-all duration-300",
+              style: { width: `${percent2}%` }
+            }
+          ) }) : null
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            "aria-label": `Remove ${game.name} from your library`,
+            onClick: (event) => {
+              event.stopPropagation();
+              void removeFromLibrary(game.id).catch((error) => {
+                console.error("Failed to remove game from the catalog library", error);
+              });
+            },
+            className: "absolute right-2 top-9 rounded-lg bg-black/60 p-1.5 text-white/80 opacity-0 backdrop-blur-sm transition-all hover:bg-destructive hover:text-white group-hover:opacity-100",
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, { className: "h-3.5 w-3.5" })
+          }
+        )
+      ]
+    }
+  );
 }
 function EmptyState() {
   const { setInstallOpen, scan } = useLibrary();
@@ -17795,18 +18308,57 @@ Input.displayName = "Input";
 function Skeleton({ className, ...props }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: cn("animate-pulse rounded-md bg-muted", className), ...props });
 }
+const GRID = "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5";
+function normalizeName(value) {
+  return value.toLowerCase().replace(/[™®©]/g, "").replace(/\b(ps4|ps5)\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
 function LibraryView() {
   const { games, loading, scan, setInstallOpen } = useLibrary();
+  const entries = useStore((state) => state.entries);
   const [query, setQuery] = reactExports.useState("");
+  const [filter2, setFilter] = reactExports.useState("all");
   const [scanning, setScanning] = reactExports.useState(false);
   const [scanMsg, setScanMsg] = reactExports.useState(null);
-  const filtered = reactExports.useMemo(() => {
-    const q2 = query.trim().toLowerCase();
-    if (!q2) return games;
-    return games.filter(
-      (game) => game.name.toLowerCase().includes(q2) || (game.titleId ?? "").toLowerCase().includes(q2)
+  reactExports.useEffect(() => {
+    void useStore.getState().refreshLibrary().catch(() => {
+    });
+  }, []);
+  const wishlist = reactExports.useMemo(() => {
+    const installedIds = new Set(games.map((game) => game.id));
+    const installedTitleIds = new Set(
+      games.map((game) => game.titleId).filter((value) => Boolean(value))
     );
-  }, [games, query]);
+    const installedNames = new Set(games.map((game) => normalizeName(game.name)));
+    const seen = /* @__PURE__ */ new Set();
+    return entries.filter((entry) => {
+      if (entry.status === "installed") return false;
+      if (entry.installedGameId && installedIds.has(entry.installedGameId)) return false;
+      const titleId = entry.game.titleId;
+      if (titleId && installedTitleIds.has(titleId)) return false;
+      const nameKey = normalizeName(entry.game.name);
+      if (nameKey && installedNames.has(nameKey)) return false;
+      const key = titleId || nameKey || entry.game.id;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [entries, games]);
+  const needle = query.trim().toLowerCase();
+  const installed = reactExports.useMemo(() => {
+    if (!needle) return games;
+    return games.filter(
+      (game) => game.name.toLowerCase().includes(needle) || (game.titleId ?? "").toLowerCase().includes(needle)
+    );
+  }, [games, needle]);
+  const pending = reactExports.useMemo(() => {
+    if (!needle) return wishlist;
+    return wishlist.filter(
+      (entry) => entry.game.name.toLowerCase().includes(needle) || (entry.game.titleId ?? "").toLowerCase().includes(needle) || (entry.game.publisher ?? "").toLowerCase().includes(needle)
+    );
+  }, [wishlist, needle]);
+  const showInstalled = filter2 !== "wishlist" ? installed : [];
+  const showPending = filter2 !== "installed" ? pending : [];
+  const visible = showInstalled.length + showPending.length;
   const runScan = async () => {
     setScanning(true);
     setScanMsg(null);
@@ -17824,57 +18376,109 @@ function LibraryView() {
     }
     setScanning(false);
   };
+  const header = /* @__PURE__ */ jsxRuntimeExports.jsx(
+    Header,
+    {
+      installedCount: games.length,
+      wishlistCount: wishlist.length,
+      loading,
+      query,
+      onQuery: setQuery,
+      onScan: runScan,
+      scanning,
+      scanMsg,
+      filter: filter2,
+      onFilter: setFilter
+    }
+  );
   if (loading) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Header, { count: null, query, onQuery: setQuery, onScan: runScan, scanning, scanMsg: null }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: Array.from({ length: 6 }).map((_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(Skeleton, { className: "aspect-[3/4] rounded-2xl" }, i)) })
+      header,
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: GRID, children: Array.from({ length: 6 }).map((_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx(Skeleton, { className: "aspect-[3/4] rounded-2xl" }, i)) })
     ] });
   }
-  if (games.length === 0) {
+  if (games.length === 0 && wishlist.length === 0) {
     return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Header, { count: 0, query, onQuery: setQuery, onScan: runScan, scanning, scanMsg }),
+      header,
       /* @__PURE__ */ jsxRuntimeExports.jsx(EmptyState, {})
     ] });
   }
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      Header,
-      {
-        count: games.length,
-        query,
-        onQuery: setQuery,
-        onScan: runScan,
-        scanning,
-        scanMsg
-      }
-    ),
-    filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel flex flex-col items-center gap-3 py-16 text-center", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-muted-foreground", children: [
-        "No games match “",
-        query,
-        "”."
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", size: "sm", onClick: () => setQuery(""), children: "Clear search" })
-    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(GameGrid, { games: filtered }),
+    header,
+    visible === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel flex flex-col items-center gap-3 py-16 text-center", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: needle ? `No games match “${query}”.` : filter2 === "installed" ? "Nothing installed yet — games you save from the catalog will show here as not installed." : "Every game in your library is installed." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Button,
+        {
+          variant: "outline",
+          size: "sm",
+          onClick: () => {
+            setQuery("");
+            setFilter("all");
+          },
+          children: "Show all games"
+        }
+      )
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: GRID, children: [
+      showInstalled.map((game, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(GameCard, { game, index }, game.id)),
+      showPending.map((entry, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(WishlistGameCard, { entry, index: showInstalled.length + index }, entry.game.id))
+    ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-10 flex justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "ghost", size: "sm", className: "text-muted-foreground", onClick: () => setInstallOpen(true), children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "h-4 w-4" }),
       " Install another game"
     ] }) })
   ] });
 }
-function Header({
+function Tab({
+  icon: Icon2,
+  label,
   count: count2,
+  active,
+  onClick
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "button",
+    {
+      onClick,
+      className: cn(
+        "inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+        active ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"
+      ),
+      children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: "h-4 w-4" }),
+        label,
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "span",
+          {
+            className: cn(
+              "rounded-full px-1.5 text-[11px] tabular-nums",
+              active ? "bg-primary/15 text-primary" : "bg-secondary text-muted-foreground"
+            ),
+            children: count2
+          }
+        )
+      ]
+    }
+  );
+}
+function Header({
+  installedCount,
+  wishlistCount,
+  loading,
   query,
   onQuery,
   onScan,
   scanning,
-  scanMsg
+  scanMsg,
+  filter: filter2,
+  onFilter
 }) {
+  const total = installedCount + wishlistCount;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mb-7", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-end justify-between gap-4", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-2xl font-semibold tracking-tight", children: "Library" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: count2 === null ? "Loading your games…" : `${count2} installed ${count2 === 1 ? "game" : "games"}` })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: loading ? "Loading your games…" : `${installedCount} installed${wishlistCount > 0 ? ` · ${wishlistCount} not installed` : ""}` })
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative w-60", children: [
@@ -17894,6 +18498,29 @@ function Header({
           scanning ? "Scanning…" : "Scan"
         ] })
       ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-5 flex w-fit items-center gap-1 rounded-xl border border-border/60 bg-secondary/30 p-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Tab, { icon: LayoutGrid, label: "All", count: total, active: filter2 === "all", onClick: () => onFilter("all") }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Tab,
+        {
+          icon: LayoutGrid,
+          label: "Installed",
+          count: installedCount,
+          active: filter2 === "installed",
+          onClick: () => onFilter("installed")
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Tab,
+        {
+          icon: Download,
+          label: "Not installed",
+          count: wishlistCount,
+          active: filter2 === "wishlist",
+          onClick: () => onFilter("wishlist")
+        }
+      )
     ] }),
     scanMsg && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-muted-foreground", role: "status", children: scanMsg })
   ] });
@@ -17998,6 +18625,1095 @@ const Separator = reactExports.forwardRef(({ className, orientation = "horizonta
   }
 ));
 Separator.displayName = Separator$1.displayName;
+const DEFAULT_GAME_GRAPHICS = {
+  presentMode: "fifo",
+  overlayPosition: "tl"
+};
+function normalizeGameGraphics(value) {
+  const presentMode = value?.presentMode === "fifo" || value?.presentMode === "fifo_latest_ready" || value?.presentMode === "mailbox" || value?.presentMode === "immediate" ? value.presentMode : DEFAULT_GAME_GRAPHICS.presentMode;
+  const overlayPosition = value?.overlayPosition === "tl" || value?.overlayPosition === "tr" || value?.overlayPosition === "bl" || value?.overlayPosition === "br" ? value.overlayPosition : DEFAULT_GAME_GRAPHICS.overlayPosition;
+  return {
+    presentMode,
+    gpu: typeof value?.gpu === "string" && value.gpu.trim() ? value.gpu.trim() : null,
+    overlay: value?.overlay === true,
+    overlayPosition,
+    shaderCache: value?.shaderCache !== false,
+    gpuProfile: value?.gpuProfile === true,
+    drawProfile: value?.drawProfile === true,
+    telemetry: value?.telemetry !== false
+  };
+}
+function normalizeGameCompatibility(value) {
+  return {
+    trophyData: value?.trophyData === "placeholders" ? "placeholders" : "package"
+  };
+}
+function messageOf$4(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/^Error invoking remote method '[^']+':\s*/, "").replace(/^Error:\s*/, "");
+}
+function showRate(value) {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  return value >= 10 ? value.toFixed(1) : value.toFixed(2);
+}
+function showMs(value) {
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  return `${value.toFixed(1)} ms`;
+}
+function fpsStats(session) {
+  if (!session || session.samples.length === 0) return null;
+  const values = session.samples.map((sample) => sample.fps).filter((fps) => fps > 0);
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const worstCount = Math.max(1, Math.ceil(sorted.length * 0.01));
+  const worst = sorted.slice(0, worstCount);
+  const latest = values[values.length - 1];
+  return {
+    latest,
+    average: values.reduce((sum, fps) => sum + fps, 0) / values.length,
+    minimum: sorted[0],
+    maximum: sorted[sorted.length - 1],
+    onePercentLow: worst.reduce((sum, fps) => sum + fps, 0) / worst.length,
+    frameMs: latest > 0 ? 1e3 / latest : 0
+  };
+}
+function refreshLabel$1(hz) {
+  if (!Number.isFinite(hz) || hz <= 0) return "unknown refresh";
+  return Number.isInteger(hz) ? `${hz} Hz` : `${hz.toFixed(2)} Hz`;
+}
+function framerateVerdict(stats, display, profile) {
+  if (!stats) return null;
+  const average = stats.average;
+  const refresh = display?.refreshRate ?? 0;
+  const belowHighFrameRate = refresh > 0 && Math.round(refresh) < 120;
+  const near = (target, tolerance) => Math.abs(average - target) <= tolerance;
+  if (near(59.94, 1.6)) {
+    if (belowHighFrameRate && profile?.highFrameRate === false) {
+      return {
+        tone: "warn",
+        label: "≈60 FPS — display and game limits",
+        detail: `The display runs at ${refreshLabel$1(refresh)} and this game does not advertise 120 Hz output, so AnyPS5 stays on its 59.94 Hz clock. Raising the display alone will not unlock this game.`
+      };
+    }
+    if (belowHighFrameRate) {
+      return {
+        tone: "warn",
+        label: "≈60 FPS — display limited",
+        detail: `The display runs at ${refreshLabel$1(refresh)}. Raise it to 120 Hz or higher in Windows display settings; until then AnyPS5 keeps its 59.94 Hz clock.`
+      };
+    }
+    if (profile?.highFrameRate === false) {
+      return {
+        tone: "warn",
+        label: "≈60 FPS — game-side cap",
+        detail: "This game does not advertise 120 Hz output, so AnyPS5 runs it on the 59.94 Hz clock. That limit is in the game metadata, not a missing NovaPS5 setting."
+      };
+    }
+    if (profile?.highFrameRate === true) {
+      return {
+        tone: "info",
+        label: "≈60 FPS — in-game limit",
+        detail: "The 120 Hz output path is available, so the game itself is holding 60 FPS. Check its quality/performance mode or internal frame cap."
+      };
+    }
+    return {
+      tone: "info",
+      label: "≈60 FPS",
+      detail: "Check the display refresh rate and the game’s own frame cap. AnyPS5 cannot exceed 59.94 FPS without the title’s 119.88 Hz output mode."
+    };
+  }
+  if (near(29.97, 1.5)) {
+    return {
+      tone: "info",
+      label: "≈30 FPS",
+      detail: "About 30 FPS is normally the game’s quality mode or an internal cap; check its display/performance settings."
+    };
+  }
+  if (near(119.88, 2.2)) {
+    return {
+      tone: "good",
+      label: "≈120 FPS",
+      detail: "This run is using AnyPS5’s 119.88 Hz output path."
+    };
+  }
+  return null;
+}
+function Sparkline({ session }) {
+  const gradientId = reactExports.useId().replace(/:/g, "");
+  const fps = session.samples.map((sample) => sample.fps);
+  if (fps.length < 2) {
+    return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-[72px] items-center justify-center rounded-lg border border-border/50 bg-background/40 text-[11px] text-muted-foreground", children: "Waiting for the first present samples…" });
+  }
+  const width = 320;
+  const height = 72;
+  const padding = 3;
+  const ceiling = Math.max(60, ...fps) * 1.08;
+  const guide = ceiling > 62 ? 60 : null;
+  const guideY = guide === null ? null : height - padding - guide / ceiling * (height - padding * 2);
+  const step = (width - padding * 2) / (fps.length - 1);
+  const point = (value, index) => {
+    const x2 = padding + index * step;
+    const y2 = height - padding - Math.min(value, ceiling) / ceiling * (height - padding * 2);
+    return `${x2.toFixed(2)},${y2.toFixed(2)}`;
+  };
+  const points = fps.map(point).join(" ");
+  const area = `${padding},${height - padding} ${points} ${width - padding},${height - padding}`;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-lg border border-border/50 bg-background/40 p-2", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "svg",
+      {
+        viewBox: `0 0 ${width} ${height}`,
+        preserveAspectRatio: "none",
+        className: "h-[72px] w-full text-emerald-400",
+        role: "img",
+        "aria-label": "Frames per second over the last telemetry samples",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("defs", { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("linearGradient", { id: gradientId, x1: "0", y1: "0", x2: "0", y2: "1", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("stop", { offset: "0%", stopColor: "currentColor", stopOpacity: "0.28" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("stop", { offset: "100%", stopColor: "currentColor", stopOpacity: "0" })
+          ] }) }),
+          guideY !== null ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "line",
+            {
+              x1: padding,
+              y1: guideY,
+              x2: width - padding,
+              y2: guideY,
+              stroke: "currentColor",
+              strokeOpacity: "0.18",
+              strokeDasharray: "3 4"
+            }
+          ) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("polygon", { points: area, fill: `url(#${gradientId})` }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "polyline",
+            {
+              points,
+              fill: "none",
+              stroke: "currentColor",
+              strokeWidth: "1.8",
+              strokeLinejoin: "round",
+              strokeLinecap: "round"
+            }
+          )
+        ]
+      }
+    ),
+    guide !== null ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 text-right text-[9px] leading-none text-muted-foreground/70", children: "dashed line: 60 FPS" }) : null
+  ] });
+}
+function Stat({ label, value, accent }) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-lg border border-border/50 bg-secondary/20 px-2.5 py-2", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] uppercase tracking-[0.12em] text-muted-foreground", children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "div",
+      {
+        className: cn(
+          "mt-0.5 font-mono text-sm font-semibold tabular-nums",
+          accent ? "text-emerald-300" : "text-foreground/90"
+        ),
+        children: value
+      }
+    )
+  ] });
+}
+function SessionMetrics({
+  game,
+  telemetryEnabled,
+  profile,
+  display
+}) {
+  const [session, setSession] = reactExports.useState(null);
+  const [error, setError] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    let timer;
+    const poll = async () => {
+      try {
+        const next = await graphicsBridge().session(game.id);
+        if (!cancelled) {
+          setSession(next);
+          setError(null);
+        }
+      } catch (caught) {
+        if (!cancelled) setError(messageOf$4(caught));
+      }
+    };
+    void poll();
+    timer = window.setInterval(() => void poll(), 1e3);
+    return () => {
+      cancelled = true;
+      if (timer !== void 0) window.clearInterval(timer);
+    };
+  }, [game.id]);
+  const stats = fpsStats(session);
+  const verdict = framerateVerdict(stats, display, profile);
+  const hasSamples = (session?.samples.length ?? 0) > 0;
+  const live = session?.active === true;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 rounded-xl border border-border/60 bg-secondary/10 p-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Activity, { className: "h-4 w-4 text-muted-foreground" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-medium text-foreground/90", children: "Session monitor" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[11px] text-muted-foreground", children: "Live FPS sampled from AnyPS5 videoout telemetry." })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center gap-2", children: !telemetryEnabled ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground", children: "Monitoring off" }) : live ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" }),
+        "Live"
+      ] }) : hasSamples ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground", children: "Last session" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground", children: "Waiting" }) })
+    ] }),
+    !telemetryEnabled ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex items-start gap-2 rounded-lg border border-border/50 bg-background/40 p-2.5 text-[11px] leading-relaxed text-muted-foreground", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Gauge, { className: "mt-0.5 h-3.5 w-3.5 shrink-0" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Session monitoring is turned off for this game. Enable it above, save, then launch the game to collect FPS samples." })
+    ] }) : error ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-300", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "min-w-0 flex-1", children: error }),
+      error.toLowerCase().includes("preload") ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: () => window.location.reload(),
+          className: "rounded-md border border-border/60 px-2 py-1 text-[11px] hover:text-foreground",
+          children: "Reload window"
+        }
+      ) : null
+    ] }) : live && !hasSamples ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2.5 text-[11px] text-muted-foreground", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-3.5 w-3.5 animate-spin" }),
+      "Game is running — waiting for the first telemetry present line."
+    ] }) : session && hasSamples ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "FPS", value: showRate(stats?.latest ?? 0), accent: true }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Frame", value: showMs(stats?.frameMs ?? 0) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "Average", value: showRate(stats?.average ?? 0) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Stat, { label: "1% low", value: showRate(stats?.onePercentLow ?? 0) })
+      ] }),
+      verdict ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "div",
+        {
+          className: cn(
+            "mt-2 flex items-start gap-2 rounded-lg border px-2.5 py-2 text-[11px] leading-relaxed",
+            verdict.tone === "good" && "border-emerald-500/25 bg-emerald-500/[0.06]",
+            verdict.tone === "warn" && "border-amber-500/25 bg-amber-500/[0.06]",
+            verdict.tone === "info" && "border-sky-500/20 bg-sky-500/[0.06]"
+          ),
+          children: [
+            verdict.tone === "warn" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" }) : verdict.tone === "good" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Activity, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Info, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-300" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-foreground/90", children: verdict.label }),
+              " ",
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: verdict.detail })
+            ] })
+          ]
+        }
+      ) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Sparkline, { session }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted-foreground", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          "Min ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-foreground/80", children: showRate(stats?.minimum ?? 0) })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+          "Max ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-foreground/80", children: showRate(stats?.maximum ?? 0) })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-1", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Timer, { className: "h-3 w-3" }),
+          session.samples.length,
+          " samples"
+        ] }),
+        session.dropped > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-1 text-amber-300", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "h-3 w-3" }),
+          session.dropped,
+          " telemetry drops"
+        ] }) : null,
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "one sample every 30 presents" })
+      ] })
+    ] }) : session?.startedAt && !session.telemetry ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2.5 text-[11px] text-muted-foreground", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Gauge, { className: "h-3.5 w-3.5" }),
+      "The last run was launched with monitoring off. Enable it above and launch again to collect samples."
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex items-center gap-2 rounded-lg border border-border/50 bg-background/40 px-3 py-2.5 text-[11px] text-muted-foreground", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { className: "h-3.5 w-3.5" }),
+      "Launch this game to start collecting session metrics."
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-2 text-[10px] leading-relaxed text-muted-foreground", children: [
+      "Samples come from the runtime's local ",
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono", children: "videoout.jsonl" }),
+      "; NovaPS5 reads only the FPS lines. The 1% low is the average of the slowest 1% of samples, useful for spotting stutter. A flat ≈60 line is AnyPS5's 59.94 Hz flip clock unless the game requests its 119.88 Hz output mode. The monitor keeps the last run visible after the game exits."
+    ] })
+  ] });
+}
+const PRESENT_MODES = [
+  {
+    value: "fifo",
+    label: "VSync (FIFO)",
+    hint: "Waits for the display. No tearing; the safest default."
+  },
+  {
+    value: "fifo_latest_ready",
+    label: "VSync — latest ready",
+    hint: "Stays synced but skips stale frames. Needs driver support; if the game does not start, use VSync."
+  },
+  {
+    value: "mailbox",
+    label: "Mailbox",
+    hint: "Shows the newest frame without waiting. May drop frames; needs driver support."
+  },
+  {
+    value: "immediate",
+    label: "Immediate",
+    hint: "Presents at once. Lowest latency, can tear; needs driver support."
+  }
+];
+const OVERLAY_POSITIONS = [
+  { value: "tl", label: "Top left" },
+  { value: "tr", label: "Top right" },
+  { value: "bl", label: "Bottom left" },
+  { value: "br", label: "Bottom right" }
+];
+const OVERLAY_LINES = [
+  { key: "FPS", detail: "Average presented frames per second." },
+  { key: "FRAME", detail: "Time of the most recent frame, in milliseconds." },
+  { key: "Graph", detail: "Frame-time history for the last 120 frames." },
+  { key: "MIN/AVG/MAX", detail: "Frame-time range across that history." },
+  { key: "GPU", detail: "GPU time per frame — only with GPU timing enabled." },
+  { key: "DRIVER", detail: "Driver time per frame — only with driver timing enabled." },
+  { key: "DRAWS / DISPATCH", detail: "Draw calls and compute dispatches per frame." },
+  { key: "SHADERS", detail: "Pipelines active in the window and compiled in total." },
+  { key: "VRAM / RAM", detail: "Video-memory and process memory usage." },
+  { key: "RES", detail: "Display resolution / game window resolution." }
+];
+function messageOf$3(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/^Error invoking remote method '[^']+':\s*/, "").replace(/^Error:\s*/, "");
+}
+function refreshLabel(hz) {
+  if (!Number.isFinite(hz) || hz <= 0) return "unknown refresh";
+  return Number.isInteger(hz) ? `${hz} Hz` : `${hz.toFixed(2)} Hz`;
+}
+function limitAdvice(display, profile) {
+  const refresh = display?.refreshRate ?? 0;
+  const highFrameRate = profile?.highFrameRate;
+  if (!display || !Number.isFinite(refresh) || refresh <= 0) {
+    return {
+      tone: "info",
+      title: "Display refresh unknown",
+      detail: "NovaPS5 could not read the display refresh rate. AnyPS5 needs a 120 Hz or faster display before it can use its 119.88 Hz output path."
+    };
+  }
+  if (Math.round(refresh) < 120) {
+    if (highFrameRate === false) {
+      return {
+        tone: "warn",
+        title: `Two limits: display ${refreshLabel(refresh)} and no 120 Hz flag`,
+        detail: `The display is below 120 Hz, and this game does not advertise 120 Hz output either. AnyPS5 stays on its 59.94 Hz clock. Raising the display to 120 Hz or higher is still worth doing, but this particular game will stay capped until its own metadata declares 120 Hz output.`
+      };
+    }
+    return {
+      tone: "warn",
+      title: highFrameRate === true ? `Display limited to ${refreshLabel(refresh)}` : `Display is ${refreshLabel(refresh)}`,
+      detail: highFrameRate === true ? `This game advertises 120 Hz output, but the display is below 120 Hz. AnyPS5 only switches to its 119.88 Hz path at 120 Hz or faster, so the runtime stays at 59.94 FPS. Raise the refresh rate in Windows display settings.` : `AnyPS5 needs a 120 Hz or faster display for its 119.88 Hz output path. At ${refreshLabel(refresh)} the runtime keeps its 59.94 Hz clock, so no game can present above about 60 FPS. Raise the refresh rate in Windows display settings first.`
+    };
+  }
+  if (highFrameRate === false) {
+    return {
+      tone: "warn",
+      title: "This game does not advertise 120 Hz output",
+      detail: "Its param.json does not set attribute3 bit 0x40, which AnyPS5 requires before a title may request the 119.88 Hz output mode. The runtime therefore paces the game at 59.94 FPS. That is a game-side limit; NovaPS5 cannot safely override it."
+    };
+  }
+  if (highFrameRate === true) {
+    return {
+      tone: "good",
+      title: "120 Hz output is available",
+      detail: "The display and the game both support the 119.88 Hz path. If this game still holds 60 FPS, its own frame cap or quality/performance mode is the limit — check the game’s display settings."
+    };
+  }
+  return {
+    tone: "info",
+    title: "120 Hz support unknown",
+    detail: profile?.detail ?? "NovaPS5 could not read this game’s metadata, so it cannot tell whether the 119.88 Hz path is available."
+  };
+}
+function Segmented$1({
+  value,
+  options,
+  onChange,
+  label
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      role: "group",
+      "aria-label": label,
+      className: "flex w-fit items-center gap-0.5 rounded-lg border border-border/60 bg-secondary/30 p-0.5",
+      children: options.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          "aria-pressed": value === option.value,
+          onClick: () => onChange(option.value),
+          className: cn(
+            "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+            value === option.value ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"
+          ),
+          children: option.label
+        },
+        option.value
+      ))
+    }
+  );
+}
+function ToolCard({
+  icon,
+  title,
+  children
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl border border-border/60 bg-secondary/20 p-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-xs font-medium text-foreground/90", children: [
+      icon,
+      title
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1.5 text-[11px] leading-relaxed text-muted-foreground", children })
+  ] });
+}
+function GameGraphicsSettings({ game }) {
+  const setGraphics = useLibrary((state) => state.setGraphics);
+  const clearShaderCache = useLibrary((state) => state.clearShaderCache);
+  const runtimeVersion = useLibrary((state) => state.appInfo?.runtimeVersion);
+  const saved = normalizeGameGraphics(game.graphics);
+  const [value, setValue] = reactExports.useState(saved);
+  const [saving, setSaving] = reactExports.useState(false);
+  const [justSaved, setJustSaved] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  const [clearing, setClearing] = reactExports.useState(false);
+  const [clearMessage, setClearMessage] = reactExports.useState(null);
+  const [displays, setDisplays] = reactExports.useState([]);
+  const [displayError, setDisplayError] = reactExports.useState(null);
+  const [profile, setProfile] = reactExports.useState(null);
+  const [profileError, setProfileError] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    setValue(normalizeGameGraphics(game.graphics));
+  }, [game.id, game.graphics]);
+  reactExports.useEffect(() => {
+    setError(null);
+    setJustSaved(false);
+    setClearMessage(null);
+  }, [game.id]);
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    const loadDisplays = async () => {
+      try {
+        const list = await graphicsBridge().displays();
+        if (!cancelled) {
+          setDisplays(list);
+          setDisplayError(null);
+        }
+      } catch (caught) {
+        if (!cancelled) setDisplayError(messageOf$3(caught));
+      }
+    };
+    void loadDisplays();
+    window.addEventListener("focus", loadDisplays);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", loadDisplays);
+    };
+  }, []);
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    setProfile(null);
+    setProfileError(null);
+    const loadProfile = async () => {
+      try {
+        const next = await graphicsBridge().performance(game.id);
+        if (!cancelled) setProfile(next);
+      } catch (caught) {
+        if (!cancelled) setProfileError(messageOf$3(caught));
+      }
+    };
+    void loadProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [game.id, game.installedAt]);
+  const normalized = normalizeGameGraphics(value);
+  const dirty = JSON.stringify(normalized) !== JSON.stringify(saved);
+  const activeMode = PRESENT_MODES.find((mode) => mode.value === value.presentMode);
+  const vsyncOn = value.presentMode === "fifo" || value.presentMode === "fifo_latest_ready";
+  const primaryDisplay = displays.find((display) => display.primary) ?? displays[0];
+  const advice = limitAdvice(primaryDisplay, profile);
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    setJustSaved(false);
+    try {
+      await setGraphics(game.id, normalized);
+      setValue(normalized);
+      setJustSaved(true);
+      window.setTimeout(() => setJustSaved(false), 2e3);
+    } catch (caught) {
+      setError(messageOf$3(caught));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const clear = async () => {
+    setClearing(true);
+    setError(null);
+    setClearMessage(null);
+    try {
+      const result = await clearShaderCache(game.id);
+      if (!result.ok) throw new Error(result.error ?? "Could not clear the shader cache.");
+      setClearMessage(
+        result.freedBytes ? `Cleared ${formatBytes(result.freedBytes)} — rebuilt on the next launch.` : "Shader cache cleared — rebuilt on the next launch."
+      );
+    } catch (caught) {
+      setError(messageOf$3(caught));
+    } finally {
+      setClearing(false);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel mt-6 p-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Monitor, { className: "h-4 w-4" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-sm font-semibold", children: "Graphics & launch" }),
+          dirty ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium text-amber-300", children: "Unsaved changes" }) : null
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-0.5 text-xs text-muted-foreground", children: "Saved for this game and applied by NovaPS5 right before it starts." })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-border/60 bg-secondary/10 p-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-xs font-semibold text-foreground/90", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Gauge, { className: "h-3.5 w-3.5 text-muted-foreground" }),
+        "Framerate & sync"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 grid gap-3 sm:grid-cols-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-medium text-foreground/90", children: "VSync" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              Segmented$1,
+              {
+                label: "VSync",
+                value: vsyncOn ? "on" : "off",
+                options: [
+                  { value: "on", label: "On" },
+                  { value: "off", label: "Off" }
+                ],
+                onChange: (next) => setValue((current) => ({
+                  ...current,
+                  // Keep an advanced mode when it already belongs to the
+                  // requested group, instead of silently downgrading
+                  // mailbox/latest-ready to immediate/fifo.
+                  presentMode: next === "on" ? current.presentMode === "fifo" || current.presentMode === "fifo_latest_ready" ? current.presentMode : "fifo" : current.presentMode === "mailbox" || current.presentMode === "immediate" ? current.presentMode : "immediate"
+                }))
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] leading-relaxed text-muted-foreground", children: vsyncOn ? "On uses FIFO: the presenter waits for the display, so there is no tearing." : "Off uses immediate: the newest frame is presented at once. Lower latency, but it can tear. If the game fails to start, switch VSync back on." }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[10px] leading-relaxed text-muted-foreground/80", children: "Present mode changes latency and tearing, not the frame-rate ceiling. AnyPS5 still paces flips at 59.94 FPS unless the game requests its 119.88 Hz output mode." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block space-y-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-medium text-foreground/90", children: "Present mode (advanced)" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "select",
+            {
+              value: value.presentMode,
+              onChange: (event) => setValue((current) => ({
+                ...current,
+                presentMode: event.target.value
+              })),
+              className: "h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+              children: PRESENT_MODES.map((mode) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: mode.value, className: "bg-card text-foreground", children: mode.label }, mode.value))
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-[11px] leading-relaxed text-muted-foreground", children: activeMode?.hint })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "div",
+        {
+          className: cn(
+            "mt-3 rounded-lg border p-2.5",
+            advice.tone === "good" && "border-emerald-500/25 bg-emerald-500/[0.06]",
+            advice.tone === "warn" && "border-amber-500/25 bg-amber-500/[0.06]",
+            advice.tone === "info" && "border-sky-500/20 bg-sky-500/[0.06]"
+          ),
+          children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-2", children: [
+            advice.tone === "good" ? /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" }) : advice.tone === "warn" ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Info, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-300" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[11px] font-medium text-foreground/90", children: advice.title }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-0.5 text-[11px] leading-relaxed text-muted-foreground", children: advice.detail }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "rounded-full bg-background/50 px-2 py-0.5", children: [
+                  "Display ",
+                  primaryDisplay ? refreshLabel(primaryDisplay.refreshRate) : "unknown"
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "rounded-full bg-background/50 px-2 py-0.5", children: [
+                  "120 Hz flag:",
+                  " ",
+                  profile?.highFrameRate === true ? "advertised" : profile?.highFrameRate === false ? "not advertised" : "unknown"
+                ] }),
+                profile?.attribute3 !== null && profile?.attribute3 !== void 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "rounded-full bg-background/50 px-2 py-0.5 font-mono", children: [
+                  "attribute3 0x",
+                  profile.attribute3.toString(16)
+                ] }) : null
+              ] }),
+              profile?.detail ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-[10px] leading-relaxed text-muted-foreground/80", children: profile.detail }) : null,
+              profileError ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-[10px] leading-relaxed text-amber-300", children: profileError }) : null
+            ] })
+          ] })
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 grid gap-3 sm:grid-cols-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(ToolCard, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(Maximize2, { className: "h-3.5 w-3.5 text-muted-foreground" }), title: "Borderless fullscreen", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Toggle it in-game with" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("kbd", { className: "inline-flex items-center gap-1 rounded border border-border/70 bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-foreground/90", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Keyboard, { className: "h-3 w-3" }),
+            " F11"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "or a custom binding in" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-[10px] text-foreground/80", children: "anyps5-input.ini" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1.5", children: "AnyPS5 uses borderless desktop fullscreen. It has no startup window-mode option, so NovaPS5 cannot pre-set fullscreen before the game opens; F11 is the real runtime toggle." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(ToolCard, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-3.5 w-3.5 text-muted-foreground" }), title: "Display refresh rate", children: [
+        primaryDisplay ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "font-mono text-[11px] text-foreground/85", children: [
+          primaryDisplay.width,
+          " × ",
+          primaryDisplay.height,
+          " ·",
+          " ",
+          refreshLabel(primaryDisplay.refreshRate),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "ml-1.5 font-sans text-[10px] text-muted-foreground", children: "primary" })
+        ] }) : displayError ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-amber-300", children: displayError }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "Reading the host display…" }),
+        displays.length > 1 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 space-y-0.5", children: displays.filter((display) => display.id !== primaryDisplay?.id).map((display) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "font-mono text-[10px] text-muted-foreground", children: [
+          display.label,
+          ": ",
+          display.width,
+          " × ",
+          display.height,
+          " ·",
+          " ",
+          refreshLabel(display.refreshRate)
+        ] }, display.id)) }) : null,
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1.5", children: "Read-only: AnyPS5 follows the desktop display mode and has no refresh-rate override. Change it in Windows display settings. 120 Hz or faster lets the runtime use its 119.88 Hz path, but the game must also advertise 120 Hz output in its metadata; the game still chooses its own frame rate." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          Button,
+          {
+            type: "button",
+            size: "sm",
+            variant: "outline",
+            className: "mt-2",
+            onClick: () => void window.api?.openDisplaySettings?.(),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, {}),
+              " Open display settings"
+            ]
+          }
+        )
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 grid gap-3 sm:grid-cols-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block space-y-1.5 rounded-xl border border-border/60 bg-secondary/20 p-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-2 text-xs font-medium text-foreground/90", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Cpu, { className: "h-3.5 w-3.5 text-muted-foreground" }),
+          " Vulkan GPU"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Input,
+          {
+            value: value.gpu ?? "",
+            onChange: (event) => setValue((current) => ({ ...current, gpu: event.target.value })),
+            placeholder: "Automatic — first Vulkan device",
+            spellCheck: false
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-[11px] leading-relaxed text-muted-foreground", children: "Leave empty to let AnyPS5 choose. Or enter part of a device name, e.g. RTX 3060." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(ToolCard, { icon: /* @__PURE__ */ jsxRuntimeExports.jsx(SlidersHorizontal, { className: "h-3.5 w-3.5 text-muted-foreground" }), title: "Graphics quality", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "Render resolution, quality presets, FSR, and DLSS are chosen by the game, not by the runtime. AnyPS5 has no global quality or render-scale override, so NovaPS5 does not expose a fake one. Use the game's own display or quality menu; these launch controls stay active alongside it." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => window.api.openExternal(
+              "https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#display-resolution-and-window-size"
+            ),
+            className: "mt-1.5 text-[11px] underline underline-offset-2 transition-colors hover:text-foreground",
+            children: "Runtime display docs"
+          }
+        )
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-border/60 bg-secondary/10 p-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-3", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-w-0 items-start gap-2.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Activity, { className: "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-medium text-foreground/90", children: "Performance overlay" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-0.5 text-[11px] leading-relaxed text-muted-foreground", children: "FPS, frame time, graph, memory, draw calls, and the display/window resolution. F10 toggles it in-game." })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Segmented$1,
+          {
+            label: "Performance overlay",
+            value: value.overlay ? "on" : "off",
+            options: [
+              { value: "off", label: "Off" },
+              { value: "on", label: "On" }
+            ],
+            onChange: (next) => setValue((current) => ({ ...current, overlay: next === "on" }))
+          }
+        )
+      ] }),
+      value.overlay ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex flex-wrap items-center gap-2 pl-1", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] text-muted-foreground", children: "Overlay position" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Segmented$1,
+            {
+              label: "Overlay position",
+              value: value.overlayPosition,
+              options: OVERLAY_POSITIONS,
+              onChange: (next) => setValue((current) => ({ ...current, overlayPosition: next }))
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 grid gap-x-4 gap-y-1 rounded-lg border border-border/50 bg-background/30 p-2.5 sm:grid-cols-2", children: OVERLAY_LINES.map((line) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2 text-[10px] leading-relaxed", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "w-[86px] shrink-0 font-mono text-foreground/80", children: line.key }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: line.detail })
+        ] }, line.key)) })
+      ] }) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 grid gap-2 sm:grid-cols-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/30 px-2.5 py-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[11px] font-medium text-foreground/90", children: "GPU timing" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] leading-relaxed text-muted-foreground", children: "Adds a GPU line to the overlay." })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Segmented$1,
+            {
+              label: "GPU timing",
+              value: value.gpuProfile ? "on" : "off",
+              options: [
+                { value: "off", label: "Off" },
+                { value: "on", label: "On" }
+              ],
+              onChange: (next) => setValue((current) => ({ ...current, gpuProfile: next === "on" }))
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/30 px-2.5 py-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[11px] font-medium text-foreground/90", children: "Driver timing" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] leading-relaxed text-muted-foreground", children: "Adds a DRIVER line and extra detail." })
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Segmented$1,
+            {
+              label: "Driver timing",
+              value: value.drawProfile ? "on" : "off",
+              options: [
+                { value: "off", label: "Off" },
+                { value: "on", label: "On" }
+              ],
+              onChange: (next) => setValue((current) => ({ ...current, drawProfile: next === "on" }))
+            }
+          )
+        ] })
+      ] }),
+      value.gpuProfile || value.drawProfile ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-2 flex items-start gap-1.5 text-[10px] leading-relaxed text-amber-300/90", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Info, { className: "mt-0.5 h-3 w-3 shrink-0" }),
+        "Profiling adds overhead. The overlay shows PROFILED and its FPS/frame numbers are not comparable with a normal run — turn these off after measuring."
+      ] }) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/50 bg-background/30 px-2.5 py-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[11px] font-medium text-foreground/90", children: "Session monitoring" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] leading-relaxed text-muted-foreground", children: "Record FPS samples to a per-launch telemetry file for the live monitor below." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Segmented$1,
+          {
+            label: "Session monitoring",
+            value: value.telemetry ? "on" : "off",
+            options: [
+              { value: "off", label: "Off" },
+              { value: "on", label: "On" }
+            ],
+            onChange: (next) => setValue((current) => ({ ...current, telemetry: next === "on" }))
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        SessionMetrics,
+        {
+          game,
+          telemetryEnabled: value.telemetry,
+          profile,
+          display: primaryDisplay
+        }
+      )
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-secondary/20 p-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-w-0 items-start gap-2.5", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Layers, { className: "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-medium text-foreground/90", children: "Shader cache" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-0.5 text-[11px] leading-relaxed text-muted-foreground", children: "Keeps recompiled shaders and pipelines so later launches start faster." })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          Button,
+          {
+            type: "button",
+            size: "sm",
+            variant: "outline",
+            onClick: clear,
+            disabled: clearing,
+            title: "Delete this game's shader and pipeline cache",
+            children: [
+              clearing ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "animate-spin" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, {}),
+              " Clear"
+            ]
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Segmented$1,
+          {
+            label: "Shader cache",
+            value: value.shaderCache ? "on" : "off",
+            options: [
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" }
+            ],
+            onChange: (next) => setValue((current) => ({ ...current, shaderCache: next === "on" }))
+          }
+        )
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex flex-wrap items-center gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { type: "button", size: "sm", onClick: save, disabled: !dirty || saving, children: [
+        saving ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "animate-spin" }) : justSaved ? /* @__PURE__ */ jsxRuntimeExports.jsx(Check, {}) : null,
+        saving ? "Saving…" : justSaved ? "Saved" : "Save changes"
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        Button,
+        {
+          type: "button",
+          size: "sm",
+          variant: "ghost",
+          onClick: () => setValue(normalizeGameGraphics()),
+          disabled: !dirty || saving,
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(RotateCcw, {}),
+            " Reset to defaults"
+          ]
+        }
+      )
+    ] }),
+    error ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-300", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "min-w-0 flex-1", children: error }),
+      error.toLowerCase().includes("preload") ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Button,
+        {
+          type: "button",
+          size: "sm",
+          variant: "outline",
+          onClick: () => window.location.reload(),
+          children: "Reload window"
+        }
+      ) : null
+    ] }) : null,
+    clearMessage ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-[11px] text-emerald-300", role: "status", children: clearMessage }) : null,
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex items-start gap-2 rounded-xl border border-sky-500/20 bg-sky-500/[0.06] p-3 text-[11px] leading-relaxed text-muted-foreground", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Info, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-sky-300" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-foreground/90", children: "FSR, DLSS, and resolution are game-side." }),
+        " ",
+        runtimeVersion ? `AnyPS5 ${runtimeVersion}` : "AnyPS5",
+        " renders at the resolution the game chooses and has no upscaler override, so NovaPS5 cannot add FSR or DLSS to a game that does not support them. If the game has a display or quality menu, set them there; these launch controls stay active alongside it.",
+        " ",
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => window.api.openExternal(
+              "https://github.com/boykopovar/AnyPS5/blob/main/docs/user/USAGE.md#display-resolution-and-window-size"
+            ),
+            className: "underline underline-offset-2 transition-colors hover:text-foreground",
+            children: "Runtime display docs"
+          }
+        )
+      ] })
+    ] })
+  ] });
+}
+function messageOf$2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function mentionsTrophyAbort(detail) {
+  return !!detail && /trophy\s+\d+.*(does not define|is not in)/i.test(detail);
+}
+function Segmented({
+  value,
+  options,
+  onChange,
+  label,
+  disabled
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      role: "group",
+      "aria-label": label,
+      className: cn(
+        "flex w-fit items-center gap-0.5 rounded-lg border border-border/60 bg-secondary/30 p-0.5",
+        disabled && "opacity-60"
+      ),
+      children: options.map((option) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          "aria-pressed": value === option.value,
+          disabled,
+          onClick: () => onChange(option.value),
+          className: cn(
+            "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed",
+            value === option.value ? "bg-primary/15 text-primary" : "text-muted-foreground enabled:hover:text-foreground"
+          ),
+          children: option.label
+        },
+        option.value
+      ))
+    }
+  );
+}
+function GameCompatibilitySettings({ game }) {
+  const setCompatibility = useLibrary((state) => state.setCompatibility);
+  const mode = normalizeGameCompatibility(game.compatibility).trophyData;
+  const [info, setInfo] = reactExports.useState(null);
+  const [loading, setLoading] = reactExports.useState(true);
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    graphicsBridge().trophyPackage(game.id).then((next) => {
+      if (!cancelled) setInfo(next);
+    }).catch((caught) => {
+      if (!cancelled) setError(messageOf$2(caught));
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [game.id, game.installedAt]);
+  const choose = async (next) => {
+    if (next === mode || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await setCompatibility(game.id, { trophyData: next });
+      setInfo(await graphicsBridge().trophyPackage(game.id));
+    } catch (caught) {
+      setError(messageOf$2(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const abortHint = mentionsTrophyAbort(game.launchDetail);
+  const files = info?.files ?? [];
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "panel mt-6 p-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldAlert, { className: "h-4 w-4" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-sm font-semibold", children: "Compatibility" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-0.5 text-xs text-muted-foreground", children: "Workarounds for runtime behaviour that stops this game before it reaches its menu." })
+      ] })
+    ] }),
+    abortHint && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-3 text-xs text-amber-200", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-3.5 w-3.5 shrink-0" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "The launch test hit a trophy lookup the game's own trophy package does not define. AnyPS5 0.1.3 throws instead of returning the invalid-id error, so the game aborts immediately after it starts." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          Button,
+          {
+            size: "sm",
+            variant: "outline",
+            disabled: busy || mode === "placeholders",
+            onClick: () => void choose("placeholders"),
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Trophy, { className: "h-3.5 w-3.5" }),
+              "Use placeholder trophy data"
+            ]
+          }
+        )
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-4 rounded-xl border border-border/60 bg-secondary/10 p-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-xs font-semibold text-foreground/90", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Trophy, { className: "h-3.5 w-3.5 text-muted-foreground" }),
+          "Trophy data"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Segmented,
+          {
+            label: "Trophy data",
+            value: mode,
+            disabled: busy,
+            options: [
+              { value: "package", label: "Game's package" },
+              { value: "placeholders", label: "Compatibility placeholders" }
+            ],
+            onChange: (next) => void choose(next)
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-[11px] leading-relaxed text-muted-foreground", children: mode === "package" ? "The game's own trophy2 package is used, so trophy names, descriptions and the platinum rule come from the game." : "The trophy package is hidden (renamed, not deleted). AnyPS5 then answers every trophy request with placeholder data, so titles that probe past the last trophy id keep running; trophy names, descriptions and platinum rules are unavailable until you switch back." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-3 rounded-lg border border-border/50 bg-background/40 p-2.5", children: loading ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-[11px] text-muted-foreground", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-3 w-3 animate-spin" }),
+        "Reading the trophy package…"
+      ] }) : files.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] text-muted-foreground", children: "This install has no trophy2 package. AnyPS5 already uses placeholder trophy data." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("ul", { className: "space-y-1.5", children: files.map((file) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "li",
+        {
+          className: "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[11px]",
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-1.5 font-mono text-foreground/85", children: [
+              file.disabled ? /* @__PURE__ */ jsxRuntimeExports.jsx(ShieldAlert, { className: "h-3 w-3 text-amber-300" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { className: "h-3 w-3 text-emerald-400" }),
+              file.file
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-muted-foreground", children: [
+              file.disabled ? "hidden — placeholders in use" : "read by AnyPS5",
+              file.trophyCount !== null && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                " · ",
+                file.trophyCount,
+                " ",
+                file.trophyCount === 1 ? "trophy" : "trophies",
+                file.idRange ? ` (${file.idRange[0]}–${file.idRange[1]})` : ""
+              ] }),
+              " · ",
+              formatBytes(file.sizeBytes)
+            ] })
+          ]
+        },
+        file.file
+      )) }) }),
+      info?.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-[11px] text-amber-300", children: info.error }),
+      error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 text-[11px] text-amber-300", children: error })
+    ] })
+  ] });
+}
 function Meta({ label, value, wide }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: wide ? "sm:col-span-2" : void 0, children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("dt", { className: "text-[11px] uppercase tracking-[0.12em] text-muted-foreground", children: label }),
@@ -18020,7 +19736,7 @@ function GameDetail() {
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
           game.status === "error" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Badge, { variant: "destructive", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mr-1 h-3 w-3" }),
-            " Files missing"
+            " Not working"
           ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "success", children: "Ready to play" }),
           game.launchState === "works" && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "success", children: "Launch test passed" }),
           game.launchState === "failed" && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "destructive", children: "Launch test failed" }),
@@ -18032,10 +19748,22 @@ function GameDetail() {
           game.error
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-6 flex flex-wrap gap-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { size: "lg", variant: "play", onClick: () => launch(game.id), children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { className: "h-4 w-4", fill: "currentColor" }),
-            " Play"
-          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            Button,
+            {
+              size: "lg",
+              variant: "play",
+              disabled: game.status === "error",
+              title: game.status === "error" ? game.error ?? "This game is not working." : void 0,
+              onClick: () => {
+                if (game.status !== "error") launch(game.id);
+              },
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { className: "h-4 w-4", fill: "currentColor" }),
+                " Play"
+              ]
+            }
+          ),
           /* @__PURE__ */ jsxRuntimeExports.jsxs(
             Button,
             {
@@ -18067,6 +19795,10 @@ function GameDetail() {
           ),
           /* @__PURE__ */ jsxRuntimeExports.jsx(Meta, { label: "Install folder", value: game.installPath, wide: true })
         ] }),
+        game.status === "ready" ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(GameGraphicsSettings, { game }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(GameCompatibilitySettings, { game })
+        ] }) : null,
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "panel mt-6 flex items-start gap-2.5 p-3.5 text-xs text-muted-foreground", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, { className: "mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "break-all", children: game.exePath })
@@ -18336,6 +20068,101 @@ function SettingsView() {
       ] })
     ] }) })
   ] });
+}
+function StoreGameCard({ game, index }) {
+  const entries = useStore((state) => state.entries);
+  const addToLibrary = useStore((state) => state.addToLibrary);
+  const openGame = useStore((state) => state.openGame);
+  const active = useStore((state) => state.progress[game.id]);
+  const installedGames = useLibrary((state) => state.games);
+  const entry = entries.find((candidate) => candidate.game.id === game.id);
+  const installedGame = (entry?.installedGameId ? installedGames.find((candidate) => candidate.id === entry.installedGameId) : void 0) ?? (game.titleId ? installedGames.find((candidate) => candidate.titleId === game.titleId) : void 0);
+  const installed = Boolean(installedGame);
+  const downloading = active?.status === "running";
+  const downloadable = Boolean(game.downloadUrl);
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    motion.div,
+    {
+      initial: { opacity: 0, y: 14 },
+      animate: { opacity: 1, y: 0 },
+      transition: { duration: 0.35, delay: Math.min(index * 0.02, 0.25) },
+      className: "group relative cursor-pointer",
+      onClick: () => openGame(game),
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative aspect-[3/4] overflow-hidden rounded-2xl border border-border/60 bg-card transition-all duration-300 group-hover:-translate-y-1 group-hover:border-primary/50 group-hover:shadow-2xl group-hover:shadow-primary/15", children: [
+        game.coverUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "img",
+          {
+            src: game.coverUrl,
+            alt: game.name,
+            loading: "lazy",
+            draggable: false,
+            className: "h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.06]"
+          }
+        ) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback flex h-full w-full items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-12 w-12 text-muted-foreground/30" }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-t from-black/95 via-black/25 to-transparent" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "absolute left-2 top-2 z-10 rounded-lg bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-white/90 ring-1 ring-white/15 backdrop-blur-sm", children: "PS5" }),
+        installed ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200 ring-1 ring-emerald-400/40 backdrop-blur-sm", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { className: "h-3 w-3" }),
+          " Installed"
+        ] }) : entry ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-primary/20 px-1.5 py-0.5 text-[10px] font-semibold text-primary ring-1 ring-primary/40 backdrop-blur-sm", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { className: "h-3 w-3" }),
+          " In library"
+        ] }) : downloadable ? /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "absolute right-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-sky-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-sky-200 ring-1 ring-sky-400/40 backdrop-blur-sm", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Download, { className: "h-3 w-3" }),
+          " Download"
+        ] }) : null,
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute inset-0 flex items-center justify-center gap-2 bg-black/35 opacity-0 backdrop-blur-[1px] transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              onClick: (event) => {
+                event.stopPropagation();
+                openGame(game);
+              },
+              className: "rounded-full bg-white/90 px-4 py-2 text-xs font-semibold text-black shadow-xl transition-transform hover:scale-105",
+              children: "Details"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              "aria-label": entry ? "In your library" : `Add ${game.name} to your library`,
+              disabled: Boolean(entry),
+              onClick: (event) => {
+                event.stopPropagation();
+                if (!entry) {
+                  void addToLibrary(game).catch((error) => {
+                    console.error("Failed to add game to the catalog library", error);
+                  });
+                }
+              },
+              className: cn(
+                "flex h-9 w-9 items-center justify-center rounded-full shadow-xl transition-transform",
+                entry ? "bg-emerald-500/90 text-white" : "gradient-play text-white hover:scale-110"
+              ),
+              children: entry ? /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { className: "h-4 w-4" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "h-4 w-4" })
+            }
+          )
+        ] }),
+        downloading && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "absolute left-2 top-9 z-10 inline-flex items-center gap-1 rounded-lg bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white ring-1 ring-white/15 backdrop-blur-sm", children: [
+          Math.round(active.percent),
+          "% · ",
+          active.step
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute inset-x-0 bottom-0 p-3.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "truncate text-sm font-semibold text-white", children: game.name }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-0.5 flex items-center gap-2 text-[11px] text-white/60", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: game.publisher ?? "PS5" }) })
+        ] }),
+        downloading && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-x-0 bottom-0 h-1 bg-black/50", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "div",
+          {
+            className: "h-full bg-primary transition-all duration-300",
+            style: { width: `${Math.max(2, Math.min(100, active.percent))}%` }
+          }
+        ) })
+      ] })
+    }
+  );
 }
 var __defProp$c = Object.defineProperty;
 var __name$c = (target, value) => __defProp$c(target, "name", { value, configurable: true });
@@ -19489,8 +21316,8 @@ function __spreadArray(to, from, pack) {
   }
   return to.concat(ar || Array.prototype.slice.call(from));
 }
-typeof SuppressedError === "function" ? SuppressedError : function(error, suppressed, message) {
-  var e = new Error(message);
+typeof SuppressedError === "function" ? SuppressedError : function(error, suppressed, message2) {
+  var e = new Error(message2);
   return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
 };
 var zeroRightClassName = "right-scroll-bar-position";
@@ -20569,6 +22396,362 @@ const DialogTitle = reactExports.forwardRef(({ className, ...props }, ref) => /*
 DialogTitle.displayName = DialogTitle$1.displayName;
 const DialogDescription = reactExports.forwardRef(({ className, ...props }, ref) => /* @__PURE__ */ jsxRuntimeExports.jsx(DialogDescription$1, { ref, className: cn("text-sm text-muted-foreground", className), ...props }));
 DialogDescription.displayName = DialogDescription$1.displayName;
+function messageOf$1(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/^Error invoking remote method '[^']+':\s*/, "").replace(/^Error:\s*/, "");
+}
+function StoreSettingsDialog({
+  open,
+  onOpenChange
+}) {
+  const regions = useStore((state) => state.regions);
+  const settings = useStore((state) => state.settings);
+  const saveSettings = useStore((state) => state.saveSettings);
+  const [region, setRegion] = reactExports.useState(settings?.region ?? "GB");
+  const [catalogUrl, setCatalogUrl] = reactExports.useState(settings?.catalogUrl ?? "");
+  const [busy, setBusy] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    if (!open) return;
+    setRegion(settings?.region ?? "GB");
+    setCatalogUrl(settings?.catalogUrl ?? "");
+    setError(null);
+  }, [open, settings?.region, settings?.catalogUrl]);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const match = regions.find((entry) => entry.code === region);
+      await saveSettings({
+        region,
+        language: match?.language ?? "en",
+        catalogUrl: catalogUrl.trim() || null
+      });
+      onOpenChange(false);
+    } catch (caught) {
+      setError(messageOf$1(caught));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open, onOpenChange, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle, { children: "Catalog settings" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(DialogDescription, { children: "Choose which PlayStation Store region to browse, and optionally point at a catalog you host yourself." })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block space-y-1.5", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-medium text-foreground/90", children: "Region" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "select",
+          {
+            value: region,
+            onChange: (event) => setRegion(event.target.value),
+            className: "h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            children: regions.map((entry) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: entry.code, className: "bg-card text-foreground", children: entry.label }, entry.code))
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-[11px] text-muted-foreground", children: "Availability and metadata come from this storefront." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "block space-y-1.5", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-medium text-foreground/90", children: "Self-hosted catalog" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Input,
+          {
+            value: catalogUrl,
+            onChange: (event) => setCatalogUrl(event.target.value),
+            placeholder: "https://my-server/games/catalog.json or C:\\\\Games\\\\catalog.json",
+            spellCheck: false
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block text-[11px] leading-relaxed text-muted-foreground", children: "Optional. A JSON file listing dumps you already have, with a download URL this PC is allowed to fetch. Entries appear first in the catalog and can be downloaded and installed in one click. See docs/store-catalog.md." })
+      ] }),
+      error ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-300", children: error }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogFooter, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "ghost", onClick: () => onOpenChange(false), disabled: busy, children: "Cancel" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: save, disabled: busy, children: [
+        busy ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "animate-spin" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Save, {}),
+        " Save"
+      ] })
+    ] })
+  ] }) });
+}
+const GENRES = [
+  { key: "", label: "All" },
+  { key: "action", label: "Action" },
+  { key: "adventure", label: "Adventure" },
+  { key: "role_playing_games", label: "RPG" },
+  { key: "shooter", label: "Shooter" },
+  { key: "racing", label: "Racing" },
+  { key: "sports", label: "Sports" },
+  { key: "horror", label: "Horror" },
+  { key: "puzzle", label: "Puzzle" },
+  { key: "simulation", label: "Simulation" },
+  { key: "strategy", label: "Strategy" },
+  { key: "fighting", label: "Fighting" },
+  { key: "family", label: "Family" }
+];
+function yearOf(game) {
+  if (!game.releaseDate) return null;
+  const date = new Date(game.releaseDate);
+  return Number.isNaN(date.getTime()) ? null : date.getFullYear();
+}
+function GridSkeleton() {
+  return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: Array.from({ length: 10 }).map((_, index) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Skeleton, { className: "aspect-[3/4] w-full rounded-2xl" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Skeleton, { className: "h-3 w-3/4" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Skeleton, { className: "h-3 w-1/2" })
+  ] }, index)) });
+}
+function Featured({
+  games,
+  onOpen
+}) {
+  if (!games.length) return null;
+  const [hero, ...rest] = games;
+  const art = hero.heroUrl ?? hero.coverUrl;
+  const year = yearOf(hero);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "mb-8 overflow-hidden rounded-2xl border border-border/60 bg-card", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative min-h-[280px]", children: [
+      art ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: art, alt: "", className: "absolute inset-0 h-full w-full object-cover" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback absolute inset-0" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-r from-card via-card/85 to-card/10" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-t from-card/90 via-transparent to-transparent" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative flex max-w-lg flex-col gap-3 p-6 sm:p-8", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex w-fit items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Sparkles, { className: "h-3 w-3" }),
+          " Featured"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-3xl font-semibold tracking-tight", children: hero.name }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-muted-foreground", children: [
+          hero.publisher ?? "PS5",
+          year ? ` · ${year}` : ""
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-1 flex flex-wrap items-center gap-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: () => onOpen(hero), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Compass, {}),
+          " View game"
+        ] }) })
+      ] })
+    ] }),
+    rest.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-3 border-t border-border/60 p-3 sm:grid-cols-4", children: rest.slice(0, 4).map((game) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+      "button",
+      {
+        onClick: () => onOpen(game),
+        className: "group flex items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-accent/60",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-14 w-11 shrink-0 overflow-hidden rounded-md border border-border/60 bg-secondary", children: game.coverUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: game.coverUrl, alt: "", className: "h-full w-full object-cover" }) : null }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "truncate text-xs font-semibold", children: game.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "truncate text-[11px] text-muted-foreground", children: game.publisher ?? "PS5" })
+          ] })
+        ]
+      },
+      game.id
+    )) }) : null
+  ] });
+}
+function StoreView() {
+  const regions = useStore((state) => state.regions);
+  const settings = useStore((state) => state.settings);
+  const entries = useStore((state) => state.entries);
+  const featured = useStore((state) => state.featured);
+  const games = useStore((state) => state.games);
+  const total = useStore((state) => state.total);
+  const hasMore = useStore((state) => state.hasMore);
+  const query = useStore((state) => state.query);
+  const genre = useStore((state) => state.genre);
+  const mode = useStore((state) => state.mode);
+  const loading = useStore((state) => state.loading);
+  const loadingMore = useStore((state) => state.loadingMore);
+  const error = useStore((state) => state.error);
+  const load = useStore((state) => state.load);
+  const fetchPage = useStore((state) => state.fetchPage);
+  const setQuery = useStore((state) => state.setQuery);
+  const setGenre = useStore((state) => state.setGenre);
+  const setMode = useStore((state) => state.setMode);
+  const loadMore = useStore((state) => state.loadMore);
+  const openGame = useStore((state) => state.openGame);
+  const [text, setText] = reactExports.useState(query);
+  const [settingsOpen, setSettingsOpen] = reactExports.useState(false);
+  const loaded = reactExports.useRef(false);
+  const lastQuery = reactExports.useRef(query);
+  reactExports.useEffect(() => {
+    if (loaded.current) return;
+    loaded.current = true;
+    void load();
+  }, [load]);
+  reactExports.useEffect(() => {
+    if (!loaded.current) return;
+    if (text === lastQuery.current) return;
+    const timer = setTimeout(() => {
+      lastQuery.current = text;
+      setQuery(text);
+      void fetchPage(true);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [text, setQuery, fetchPage]);
+  const submitSearch = () => {
+    if (text === lastQuery.current) return;
+    lastQuery.current = text;
+    setQuery(text);
+    void fetchPage(true);
+  };
+  const clearSearch = () => {
+    setText("");
+    lastQuery.current = "";
+    setQuery("");
+    void fetchPage(true);
+  };
+  const chooseGenre = (key) => {
+    if (key === genre) return;
+    setGenre(key);
+    void fetchPage(true);
+  };
+  const activeRegion = regions.find((entry) => entry.code === settings?.region);
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("h1", { className: "flex items-center gap-2 text-2xl font-semibold tracking-tight", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-5 w-5 text-primary" }),
+          " Games"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-sm text-muted-foreground", children: "Browse the PS5 games catalog, build a library, and install from dumps you own." })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex w-full flex-wrap items-center gap-2 lg:w-auto", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative min-w-0 flex-1 lg:w-72 lg:flex-none", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Search, { className: "absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Input,
+            {
+              value: text,
+              onChange: (event) => setText(event.target.value),
+              onKeyDown: (event) => {
+                if (event.key === "Enter") submitSearch();
+              },
+              placeholder: "Search PS5 games…",
+              className: "pl-9 pr-9",
+              spellCheck: false
+            }
+          ),
+          text ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              "aria-label": "Clear search",
+              onClick: clearSearch,
+              className: "absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(X, { className: "h-4 w-4" })
+            }
+          ) : null
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", "aria-label": "Catalog settings", onClick: () => setSettingsOpen(true), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(SlidersHorizontal, {}),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden sm:inline", children: activeRegion?.label ?? "Catalog settings" })
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-6 flex w-fit items-center gap-1 rounded-xl border border-border/60 bg-secondary/30 p-1", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          onClick: () => setMode("discover"),
+          className: cn(
+            "inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+            mode === "discover" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"
+          ),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Compass, { className: "h-4 w-4" }),
+            " Discover"
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          onClick: () => setMode("library"),
+          className: cn(
+            "inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
+            mode === "library" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"
+          ),
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Library, { className: "h-4 w-4" }),
+            " My library",
+            entries.length > 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "rounded-full bg-secondary px-1.5 text-[11px] tabular-nums", children: entries.length }) : null
+          ]
+        }
+      )
+    ] }),
+    error ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-5 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(WifiOff, { className: "mt-0.5 h-4 w-4 shrink-0" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 leading-relaxed", children: error }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          "aria-label": "Retry",
+          onClick: () => void fetchPage(true),
+          className: "rounded p-1 transition-colors hover:bg-amber-500/20",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { className: "h-3.5 w-3.5" })
+        }
+      )
+    ] }) : null,
+    mode === "library" ? entries.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-[46vh] flex-col items-center justify-center text-center", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-border/60 bg-card", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Library, { className: "h-7 w-7 text-muted-foreground/50" }) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-lg font-semibold", children: "Nothing saved yet" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-2 max-w-sm text-sm text-muted-foreground", children: "Add games from the catalog to keep them here, then attach a dump you own to install them." }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { className: "mt-5", onClick: () => setMode("discover"), children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Compass, {}),
+        " Browse games"
+      ] })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: entries.map((entry, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(StoreGameCard, { game: entry.game, index }, entry.game.id)) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      !query && !genre ? /* @__PURE__ */ jsxRuntimeExports.jsx(Featured, { games: featured, onOpen: openGame }) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-5 flex flex-wrap gap-1.5", children: GENRES.map((chip) => /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: () => chooseGenre(chip.key),
+          className: cn(
+            "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+            genre === chip.key ? "border-primary/50 bg-primary/15 text-primary" : "border-border/60 bg-secondary/30 text-muted-foreground hover:border-border hover:text-foreground"
+          ),
+          children: chip.label
+        },
+        chip.key
+      )) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-3 flex items-center justify-between gap-3 text-xs text-muted-foreground", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "truncate", children: [
+          query ? `Results for “${query}”` : genre ? GENRES.find((chip) => chip.key === genre)?.label ?? "Games" : "New & recent PS5 releases",
+          total > 0 ? ` · ${total.toLocaleString()} ${total === 1 ? "game" : "games"}` : ""
+        ] }),
+        loading ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "h-3.5 w-3.5 shrink-0 animate-spin" }) : null
+      ] }),
+      loading && games.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx(GridSkeleton, {}) : games.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-[36vh] flex-col items-center justify-center text-center", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-medium", children: "No games found" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 max-w-sm text-xs text-muted-foreground", children: "Try another title, or clear the search and genre filters." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          Button,
+          {
+            variant: "outline",
+            className: "mt-4",
+            onClick: () => {
+              setText("");
+              lastQuery.current = "";
+              setQuery("");
+              setGenre("");
+              void fetchPage(true);
+            },
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, {}),
+              " Reset filters"
+            ]
+          }
+        )
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5", children: games.map((game, index) => /* @__PURE__ */ jsxRuntimeExports.jsx(StoreGameCard, { game, index }, game.id)) }),
+      hasMore ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-8 flex justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", onClick: loadMore, disabled: loadingMore || loading, children: [
+        loadingMore ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "animate-spin" }) : null,
+        loadingMore ? "Loading…" : "Load more"
+      ] }) }) : null
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(StoreSettingsDialog, { open: settingsOpen, onOpenChange: setSettingsOpen })
+  ] });
+}
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 var PROGRESS_NAME = "Progress";
@@ -20678,6 +22861,186 @@ const Progress = reactExports.forwardRef(({ className, value, indicatorClassName
   }
 ));
 Progress.displayName = Progress$1.displayName;
+function messageOf(error) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.replace(/^Error invoking remote method '[^']+':\s*/, "").replace(/^Error:\s*/, "");
+}
+function StoreGameDialog() {
+  const game = useStore((state) => state.activeGame);
+  const entries = useStore((state) => state.entries);
+  const entry = game ? entries.find((candidate) => candidate.game.id === game.id) : void 0;
+  const progress2 = useStore((state) => game ? state.progress[game.id] : void 0);
+  const openGame = useStore((state) => state.openGame);
+  const addToLibrary = useStore((state) => state.addToLibrary);
+  const removeFromLibrary = useStore((state) => state.removeFromLibrary);
+  const setDownloadUrl = useStore((state) => state.setDownloadUrl);
+  const download = useStore((state) => state.download);
+  const installLocal = useStore((state) => state.installLocal);
+  const installedGame = useLibrary((state) => {
+    const byId = entry?.installedGameId ? state.games.find((candidate) => candidate.id === entry.installedGameId) : void 0;
+    if (byId) return byId;
+    return game?.titleId ? state.games.find((candidate) => candidate.titleId === game.titleId) : void 0;
+  });
+  const [url, setUrl] = reactExports.useState("");
+  const [busy, setBusy] = reactExports.useState(false);
+  const [actionError, setActionError] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    setUrl(entry?.game.downloadUrl ?? game?.downloadUrl ?? "");
+    setActionError(null);
+  }, [game?.id]);
+  if (!game) return null;
+  const running = progress2?.status === "running";
+  const downloadUrl = entry?.game.downloadUrl ?? game.downloadUrl;
+  const hero = game.heroUrl ?? game.coverUrl;
+  const canDownload = Boolean(url.trim() || downloadUrl);
+  const run = async (action) => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await action();
+    } catch (error) {
+      setActionError(messageOf(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const ensureEntry = async () => {
+    if (!entry) await addToLibrary(game);
+  };
+  const startDownload = () => run(async () => {
+    await ensureEntry();
+    await download(game.id, url.trim() || downloadUrl || void 0);
+  });
+  const saveUrl = () => run(async () => {
+    await ensureEntry();
+    await setDownloadUrl(game.id, url.trim() || null);
+  });
+  const pickArchive = () => run(async () => {
+    const source = await window.api.selectArchive();
+    if (!source) return;
+    await ensureEntry();
+    await installLocal(game.id, source);
+  });
+  const pickFolder = () => run(async () => {
+    const source = await window.api.selectFolder();
+    if (!source) return;
+    await ensureEntry();
+    await installLocal(game.id, source);
+  });
+  const releaseYear = game.releaseDate ? new Date(game.releaseDate).getFullYear() : null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open: true, onOpenChange: (open) => !open && openGame(null), children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { className: "max-h-[92vh] max-w-2xl gap-0 overflow-y-auto p-0 [&>button]:rounded-full [&>button]:bg-black/55 [&>button]:p-1.5 [&>button]:text-white [&>button]:opacity-90 [&>button]:backdrop-blur-sm", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative h-44 w-full shrink-0 overflow-hidden", children: [
+      hero ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: hero, alt: "", className: "absolute inset-0 h-full w-full object-cover" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "cover-fallback absolute inset-0" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-t from-card via-card/55 to-black/10" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute inset-x-6 bottom-4 flex items-end gap-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-28 w-20 shrink-0 overflow-hidden rounded-xl border border-white/15 bg-black/40 shadow-2xl shadow-black/50", children: game.coverUrl ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: game.coverUrl, alt: "", className: "h-full w-full object-cover" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-full w-full items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(Gamepad2, { className: "h-7 w-7 text-white/25" }) }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { className: "min-w-0 pb-1", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle, { className: "truncate text-2xl", children: game.name }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogDescription, { className: "truncate", children: [
+            game.publisher ?? "PS5",
+            releaseYear ? ` · ${releaseYear}` : ""
+          ] })
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-5 p-6", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-center gap-2", children: [
+        game.sizeBytes ? /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "outline", children: formatBytes(game.sizeBytes) }) : null,
+        game.titleId ? /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "outline", children: game.titleId }) : null,
+        game.genres.map((genre) => /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "outline", children: genre }, genre)),
+        installedGame ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Badge, { variant: "success", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { className: "mr-1 h-3 w-3" }),
+          " Installed"
+        ] }) : entry ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Badge, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { className: "mr-1 h-3 w-3" }),
+          " In library"
+        ] }) : null
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2", children: [
+        installedGame ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          Button,
+          {
+            onClick: () => window.api.launch(installedGame.id),
+            disabled: installedGame.status === "error",
+            title: installedGame.status === "error" ? installedGame.error : void 0,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Play, {}),
+              " Play"
+            ]
+          }
+        ) : null,
+        entry ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", onClick: () => run(() => removeFromLibrary(game.id)), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, {}),
+          " Remove from library"
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: () => run(() => addToLibrary(game)), disabled: busy, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, {}),
+          " Add to library"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: startDownload, disabled: busy || running || !canDownload, children: [
+          running ? /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "animate-spin" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Download, {}),
+          "Download & install"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", onClick: pickArchive, disabled: busy || running, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(FileArchive, {}),
+          " Archive…"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "outline", onClick: pickFolder, disabled: busy || running, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(FolderOpen, {}),
+          " Folder…"
+        ] }),
+        game.storeUrl ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { variant: "ghost", onClick: () => window.api.openExternal(game.storeUrl), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(ExternalLink, {}),
+          " PS Store page"
+        ] }) : null
+      ] }),
+      installedGame && installedGame.status === "ready" ? /* @__PURE__ */ jsxRuntimeExports.jsx(GameGraphicsSettings, { game: installedGame }) : null,
+      actionError ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-red-300", children: actionError }) : null,
+      progress2 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2 rounded-xl border border-border/60 bg-secondary/30 p-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-3 text-xs", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate font-medium", children: progress2.message }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "tabular-nums text-muted-foreground", children: [
+            Math.round(progress2.percent),
+            "%"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Progress, { value: progress2.percent }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] text-muted-foreground", children: progress2.status === "error" ? progress2.error : progress2.receivedBytes ? `${formatBytes(progress2.receivedBytes)}${progress2.totalBytes ? ` / ${formatBytes(progress2.totalBytes)}` : ""}` : progress2.step }),
+          progress2.status === "running" && progress2.step === "downloading" ? /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Button,
+            {
+              size: "sm",
+              variant: "ghost",
+              onClick: () => window.api.storeCancelDownload(progress2.jobId),
+              children: "Cancel"
+            }
+          ) : null
+        ] })
+      ] }) : null,
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "rounded-xl border border-border/60 bg-secondary/20 p-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs font-semibold text-foreground/90", children: "Have your own copy?" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs leading-relaxed text-muted-foreground", children: "Point at a download URL you host — an archive of a dump you already own — or install from a folder/archive on this PC. NovaPS5 never downloads game content from Sony or third-party game sources." }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3 flex gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Input,
+            {
+              value: url,
+              onChange: (event) => setUrl(event.target.value),
+              placeholder: "https://my-server/games/my-dump.zip",
+              spellCheck: false
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", onClick: saveUrl, disabled: busy || url === (downloadUrl ?? ""), children: "Save" })
+        ] }),
+        downloadUrl ? /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-2 truncate text-[11px] text-muted-foreground", title: downloadUrl, children: [
+          "Source: ",
+          downloadUrl
+        ] }) : null
+      ] }),
+      game.source === "psn" ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] leading-relaxed text-muted-foreground", children: "Metadata comes from the public PlayStation Store catalog. To install, add a dump you own or a download URL you host. The game is yours to supply." }) : null
+    ] })
+  ] }) });
+}
 function InstallDialog() {
   const { installOpen, setInstallOpen, installing, setInstalling, load, launch } = useLibrary();
   const [source, setSource] = reactExports.useState(null);
@@ -20719,6 +23082,9 @@ function InstallDialog() {
   const showProgress = installing && (running || done || failed);
   const works = done && installing?.launchState === "works";
   const launchFailed = done && installing?.launchState === "failed";
+  const conversionFailed = done && installing?.conversionFailed === true;
+  const warningCount = detect?.checks?.filter((check) => check.status === "warn" && check.id !== "modules").length ?? 0;
+  const readyWithNotes = !!detect?.compatible && warningCount > 0;
   return /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open: installOpen, onOpenChange: handleOpenChange, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { className: "max-h-[86vh] overflow-y-auto", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle, { children: "Install a game" }),
@@ -20726,15 +23092,18 @@ function InstallDialog() {
     ] }),
     showProgress ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4 py-2", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start gap-3", children: [
-        done ? launchFailed ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "mt-0.5 h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "mt-0.5 h-6 w-6 shrink-0 text-emerald-400" }) : failed ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "mt-0.5 h-6 w-6 shrink-0 animate-spin text-primary" }),
+        done ? conversionFailed ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-6 w-6 shrink-0 text-amber-400" }) : launchFailed ? /* @__PURE__ */ jsxRuntimeExports.jsx(CircleX, { className: "mt-0.5 h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(CircleCheck, { className: "mt-0.5 h-6 w-6 shrink-0 text-emerald-400" }) : failed ? /* @__PURE__ */ jsxRuntimeExports.jsx(TriangleAlert, { className: "mt-0.5 h-6 w-6 shrink-0 text-red-400" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(LoaderCircle, { className: "mt-0.5 h-6 w-6 shrink-0 animate-spin text-primary" }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "break-all text-sm font-medium leading-snug", title: installing?.message, children: done ? launchFailed ? "Installed — launch test failed" : works ? "Installed — launch test passed" : "Installed — ready to play" : failed ? "Conversion failed" : installing?.message }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "break-all text-sm font-medium leading-snug", title: installing?.message, children: done ? conversionFailed ? "Installed — conversion failed" : launchFailed ? "Installed — launch test failed" : works ? "Installed — launch test passed" : "Installed — ready to play" : failed ? "Conversion failed" : installing?.message }),
           installing?.gameName && done && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "break-words text-xs text-muted-foreground", children: installing.gameName }),
-          done && launchFailed && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 break-all text-xs text-red-300", children: [
+          conversionFailed && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 break-all text-xs text-amber-300", children: "The game could not be converted, so there is nothing to launch. The dump was kept — you can retry it later from the same source." }),
+          conversionFailed && installing?.launchDetail && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 break-all text-xs text-muted-foreground", children: installing.launchDetail }),
+          done && launchFailed && !conversionFailed && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "mt-1 break-all text-xs text-red-300", children: [
             "The game did not start: ",
             installing?.launchDetail
           ] }),
           done && works && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-emerald-300/90", children: "The game started and kept running — it works." }),
+          done && works && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-muted-foreground", children: "The test launch uses default graphics. Close the game, then open its Graphics & launch panel to set present mode, GPU, overlay, or shader cache before your next launch." }),
           failed && installing?.error && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 break-all text-xs text-red-400/90", children: installing.error })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "shrink-0 text-sm tabular-nums text-muted-foreground", children: [
@@ -20745,7 +23114,7 @@ function InstallDialog() {
       /* @__PURE__ */ jsxRuntimeExports.jsx(Progress, { value: installing?.percent ?? 0, className: "h-3" }),
       !done && !failed && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-muted-foreground", children: "This can take a few minutes for large games. The app unwraps, relinks, and arranges everything automatically — after that it launches the game once to verify it works." }),
       done && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        !conversionFailed && /* @__PURE__ */ jsxRuntimeExports.jsxs(
           Button,
           {
             className: "flex-1",
@@ -20829,8 +23198,8 @@ function InstallDialog() {
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "span",
             {
-              className: detect.compatible ? "rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300" : "rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300",
-              children: detect.compatible ? "Ready to convert" : "Issues found"
+              className: !detect.compatible ? "rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300" : readyWithNotes ? "rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300" : "rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300",
+              children: !detect.compatible ? "Issues found" : readyWithNotes ? `Ready — ${warningCount} note${warningCount === 1 ? "" : "s"}` : "Ready to convert"
             }
           )
         ] }),
@@ -21428,13 +23797,35 @@ function App() {
     checkWhatsNew
   } = useLibrary();
   reactExports.useEffect(() => {
+    if (typeof window.api?.setGameGraphics === "function" && typeof window.api?.session === "function" && typeof window.api?.performance === "function" && typeof window.api?.displays === "function") {
+      return;
+    }
+    try {
+      const key = "novaps5:preload-refresh";
+      if (sessionStorage.getItem(key) === "1") return;
+      sessionStorage.setItem(key, "1");
+      window.location.reload();
+    } catch {
+    }
+  }, []);
+  reactExports.useEffect(() => {
     if (!bootstrapped) return;
     void load();
     void refreshInfo();
     void checkWhatsNew();
     void window.api.updateState().then(setUpdate);
+    void useStore.getState().refreshLibrary().catch(() => {
+    });
     const unsubscribe = window.api.onInstallProgress((progress2) => {
       setInstalling(progress2);
+      if (progress2.status === "done") void load();
+    });
+    const unsubscribeStore = window.api.onStoreProgress((progress2) => {
+      useStore.getState().setProgress(progress2);
+      if (progress2.status === "done" || progress2.status === "error") {
+        void useStore.getState().refreshLibrary().catch(() => {
+        });
+      }
       if (progress2.status === "done") void load();
     });
     const unsubscribeInstall = window.api.onOpenInstall(() => setInstallOpen(true));
@@ -21444,6 +23835,7 @@ function App() {
     });
     return () => {
       unsubscribe();
+      unsubscribeStore();
       unsubscribeInstall();
       unsubscribeUpdate();
     };
@@ -21458,10 +23850,12 @@ function App() {
       /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),
       /* @__PURE__ */ jsxRuntimeExports.jsx("main", { className: "app-bg flex-1 overflow-y-auto", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mx-auto max-w-6xl px-8 py-8", children: [
         view === "library" && (showDetail ? /* @__PURE__ */ jsxRuntimeExports.jsx(GameDetail, {}) : /* @__PURE__ */ jsxRuntimeExports.jsx(LibraryView, {})),
+        view === "store" && /* @__PURE__ */ jsxRuntimeExports.jsx(StoreView, {}),
         view === "settings" && /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsView, {})
       ] }) })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx(InstallDialog, {}),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(StoreGameDialog, {}),
     /* @__PURE__ */ jsxRuntimeExports.jsx(UpdateDialog, {})
   ] });
 }

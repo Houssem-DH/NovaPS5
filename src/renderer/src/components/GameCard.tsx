@@ -38,7 +38,7 @@ export function GameCard({ game, index }: { game: Game; index: number }) {
             className="absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-lg bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-200 ring-1 ring-amber-400/40 backdrop-blur-sm"
             title={game.error}
           >
-            <AlertTriangle className="h-3 w-3" /> Missing
+            <AlertTriangle className="h-3 w-3" /> Not working
           </span>
         ) : (
           game.launchState && (
@@ -59,11 +59,13 @@ export function GameCard({ game, index }: { game: Game; index: number }) {
         <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 backdrop-blur-[1px] transition-opacity duration-300 group-hover:opacity-100">
           <button
             aria-label={`Play ${game.name}`}
+            disabled={game.status === 'error'}
+            title={game.status === 'error' ? (game.error ?? 'This game is not working.') : undefined}
             onClick={(e) => {
               e.stopPropagation()
-              launch(game.id)
+              if (game.status !== 'error') launch(game.id)
             }}
-            className="gradient-play flex h-16 w-16 items-center justify-center rounded-full shadow-2xl shadow-black/40 transition-transform duration-200 hover:scale-110"
+            className="gradient-play flex h-16 w-16 items-center justify-center rounded-full shadow-2xl shadow-black/40 transition-transform duration-200 hover:scale-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
           >
             <Play className="h-7 w-7 translate-x-[1px] text-white" fill="currentColor" />
           </button>

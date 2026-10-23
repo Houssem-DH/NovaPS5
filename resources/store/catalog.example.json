@@ -1,0 +1,25 @@
+{
+  "name": "My PS5 backups",
+  "games": [
+    {
+      "id": "astro-bot",
+      "name": "ASTRO BOT",
+      "titleId": "PPSA21564",
+      "publisher": "Sony Interactive Entertainment",
+      "genres": ["Action", "Platformer"],
+      "releaseDate": "2024-09-06",
+      "coverUrl": "covers/astro-bot.jpg",
+      "heroUrl": "covers/astro-bot-hero.jpg",
+      "sizeBytes": 37886558208,
+      "downloadUrl": "astro-bot.zip"
+    },
+    {
+      "id": "local-dump-example",
+      "name": "Local dump example",
+      "titleId": "PPSA00000",
+      "publisher": "You",
+      "genres": ["Action"],
+      "downloadUrl": "D:\\Dumps\\MyGame"
+    }
+  ]
+}

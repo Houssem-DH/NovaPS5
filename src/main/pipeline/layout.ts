@@ -59,13 +59,30 @@ export async function buildLayout(installDir: string, keepAtRoot: string[] = [])
 
   // Junction libs -> the shared runtime libraries (instant, no data copied, so
   // every installed game points at one copy of the system .prx files).
+  const libsSource = runtimeLibsDir()
+  try {
+    if (!(await fsp.stat(libsSource)).isDirectory()) throw new Error('not a directory')
+  } catch {
+    throw new Error(
+      'The shared runtime libraries are missing — repair or reinstall the conversion runtime, then retry.'
+    )
+  }
   const libsLink = path.join(installDir, 'libs')
   try {
     await fsp.rm(libsLink, { recursive: true, force: true })
   } catch {
     /* ignore */
   }
-  await fsp.symlink(runtimeLibsDir(), libsLink, 'junction')
+  try {
+    await fsp.symlink(libsSource, libsLink, 'junction')
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    // Junctions need a local volume; a network/removable share or a read-only
+    // folder fails here after the whole game has already been copied.
+    throw new Error(
+      `Could not link the runtime libraries into the install — ${detail}. Make sure the games folder is on a local, writable drive and retry.`
+    )
+  }
 }
 
 /** Move src's entries into the already existing dest directory, then remove src. */

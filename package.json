@@ -1,7 +1,7 @@
 {
   "name": "novaps5",
   "productName": "NovaPS5",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "runtimeVersion": "1.0.0",
   "description": "A desktop library, converter and launcher for PS5 game dumps by Nova Crafted, built on the AnyPS5 conversion engine.",
   "main": "out/main/index.js",

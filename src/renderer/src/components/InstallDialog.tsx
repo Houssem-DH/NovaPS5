@@ -75,6 +75,10 @@ export function InstallDialog() {
   const showProgress = installing && (running || done || failed)
   const works = done && installing?.launchState === 'works'
   const launchFailed = done && installing?.launchState === 'failed'
+  const conversionFailed = done && installing?.conversionFailed === true
+  const warningCount =
+    detect?.checks?.filter((check) => check.status === 'warn' && check.id !== 'modules').length ?? 0
+  const readyWithNotes = !!detect?.compatible && warningCount > 0
 
   return (
     <Dialog open={installOpen} onOpenChange={handleOpenChange}>
@@ -90,7 +94,9 @@ export function InstallDialog() {
           <div className="space-y-4 py-2">
             <div className="flex items-start gap-3">
               {done ? (
-                launchFailed ? (
+                conversionFailed ? (
+                  <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-400" />
+                ) : launchFailed ? (
                   <XCircle className="mt-0.5 h-6 w-6 shrink-0 text-red-400" />
                 ) : (
                   <CheckCircle2 className="mt-0.5 h-6 w-6 shrink-0 text-emerald-400" />
@@ -103,11 +109,13 @@ export function InstallDialog() {
               <div className="min-w-0 flex-1">
                 <p className="break-all text-sm font-medium leading-snug" title={installing?.message}>
                   {done
-                    ? launchFailed
-                      ? 'Installed — launch test failed'
-                      : works
-                        ? 'Installed — launch test passed'
-                        : 'Installed — ready to play'
+                    ? conversionFailed
+                      ? 'Installed — conversion failed'
+                      : launchFailed
+                        ? 'Installed — launch test failed'
+                        : works
+                          ? 'Installed — launch test passed'
+                          : 'Installed — ready to play'
                     : failed
                       ? 'Conversion failed'
                       : installing?.message}
@@ -115,7 +123,18 @@ export function InstallDialog() {
                 {installing?.gameName && done && (
                   <p className="break-words text-xs text-muted-foreground">{installing.gameName}</p>
                 )}
-                {done && launchFailed && (
+                {conversionFailed && (
+                  <p className="mt-1 break-all text-xs text-amber-300">
+                    The game could not be converted, so there is nothing to launch. The dump
+                    was kept — you can retry it later from the same source.
+                  </p>
+                )}
+                {conversionFailed && installing?.launchDetail && (
+                  <p className="mt-1 break-all text-xs text-muted-foreground">
+                    {installing.launchDetail}
+                  </p>
+                )}
+                {done && launchFailed && !conversionFailed && (
                   <p className="mt-1 break-all text-xs text-red-300">
                     The game did not start: {installing?.launchDetail}
                   </p>
@@ -123,6 +142,13 @@ export function InstallDialog() {
                 {done && works && (
                   <p className="mt-1 text-xs text-emerald-300/90">
                     The game started and kept running — it works.
+                  </p>
+                )}
+                {done && works && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    The test launch uses default graphics. Close the game, then open its
+                    Graphics &amp; launch panel to set present mode, GPU, overlay, or shader cache
+                    before your next launch.
                   </p>
                 )}
                 {failed && installing?.error && (
@@ -145,14 +171,16 @@ export function InstallDialog() {
 
             {done && (
               <div className="flex gap-2">
-                <Button
-                  className="flex-1"
-                  onClick={() => {
-                    if (installing?.gameId) void launch(installing.gameId)
-                  }}
-                >
-                  <Play className="h-4 w-4" /> {launchFailed ? 'Play anyway' : 'Play'}
-                </Button>
+                {!conversionFailed && (
+                  <Button
+                    className="flex-1"
+                    onClick={() => {
+                      if (installing?.gameId) void launch(installing.gameId)
+                    }}
+                  >
+                    <Play className="h-4 w-4" /> {launchFailed ? 'Play anyway' : 'Play'}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   className="flex-1"
@@ -227,12 +255,18 @@ export function InstallDialog() {
                   <span className="text-sm font-medium">Compatibility</span>
                   <span
                     className={
-                      detect.compatible
-                        ? 'rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300'
-                        : 'rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300'
+                      !detect.compatible
+                        ? 'rounded-full border border-red-500/30 bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-300'
+                        : readyWithNotes
+                          ? 'rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300'
+                          : 'rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-300'
                     }
                   >
-                    {detect.compatible ? 'Ready to convert' : 'Issues found'}
+                    {!detect.compatible
+                      ? 'Issues found'
+                      : readyWithNotes
+                        ? `Ready — ${warningCount} note${warningCount === 1 ? '' : 's'}`
+                        : 'Ready to convert'}
                   </span>
                 </div>
                 <ul className="space-y-1.5">

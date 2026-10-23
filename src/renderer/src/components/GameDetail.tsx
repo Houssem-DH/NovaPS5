@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { formatBytes, timeAgo } from '@/lib/format'
+import { GameGraphicsSettings } from './GameGraphics'
+import { GameCompatibilitySettings } from './GameCompatibility'
 
 function Meta({ label, value, wide }: { label: string; value: string; wide?: boolean }) {
   return (
@@ -44,7 +46,7 @@ export function GameDetail() {
           <div className="flex flex-wrap items-center gap-2">
             {game.status === 'error' ? (
               <Badge variant="destructive">
-                <AlertTriangle className="mr-1 h-3 w-3" /> Files missing
+                <AlertTriangle className="mr-1 h-3 w-3" /> Not working
               </Badge>
             ) : (
               <Badge variant="success">Ready to play</Badge>
@@ -64,7 +66,15 @@ export function GameDetail() {
           )}
 
           <div className="mt-6 flex flex-wrap gap-3">
-            <Button size="lg" variant="play" onClick={() => launch(game.id)}>
+            <Button
+              size="lg"
+              variant="play"
+              disabled={game.status === 'error'}
+              title={game.status === 'error' ? (game.error ?? 'This game is not working.') : undefined}
+              onClick={() => {
+                if (game.status !== 'error') launch(game.id)
+              }}
+            >
               <Play className="h-4 w-4" fill="currentColor" /> Play
             </Button>
             <Button
@@ -98,6 +108,13 @@ export function GameDetail() {
             )}
             <Meta label="Install folder" value={game.installPath} wide />
           </dl>
+
+          {game.status === 'ready' ? (
+            <>
+              <GameGraphicsSettings game={game} />
+              <GameCompatibilitySettings game={game} />
+            </>
+          ) : null}
 
           <div className="panel mt-6 flex items-start gap-2.5 p-3.5 text-xs text-muted-foreground">
             <FolderOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
