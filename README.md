@@ -1,5 +1,18 @@
 # NovaPS5
 
+<p align="center">
+  <a href="https://github.com/Houssem-DH/NovaPS5/releases/latest">
+    <img height="42" alt="Download NovaPS5 for Windows" src="https://img.shields.io/badge/Download_for_Windows-x64_installer-2F81F7?style=for-the-badge&logo=windows&logoColor=white">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Houssem-DH/NovaPS5/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Houssem-DH/NovaPS5?style=flat-square&label=release&color=2F81F7"></a>
+  <a href="https://github.com/Houssem-DH/NovaPS5/releases"><img alt="Total downloads" src="https://img.shields.io/github/downloads/Houssem-DH/NovaPS5/total?style=flat-square&label=downloads&color=4B5563"></a>
+  <a href="#requirements"><img alt="Windows 10 and 11, x64" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20x64-4B5563?style=flat-square&logo=windows&logoColor=white"></a>
+  <a href="LICENSE"><img alt="GPL-2.0-or-later" src="https://img.shields.io/badge/license-GPL--2.0--or--later-4B5563?style=flat-square"></a>
+</p>
+
 A desktop library, converter and launcher for PS5 game dumps on Windows — **by Nova Crafted**.
 
 Point it at a dump folder (or a `.zip` / `.rar` / `.7z` / `.tar` archive), and NovaPS5 drives the conversion, installs
@@ -24,6 +37,23 @@ the game, then **launches it once to tell you whether it works**. No command lin
 > upstream project.
 
 ---
+
+## Download
+
+<p align="center">
+  <a href="https://github.com/Houssem-DH/NovaPS5/releases/latest">
+    <img height="42" alt="Download the latest NovaPS5 release" src="https://img.shields.io/badge/Latest_release-Download_NovaPS5-2F81F7?style=for-the-badge&logo=github&logoColor=white">
+  </a>
+</p>
+
+Get the installer from the **[latest release](https://github.com/Houssem-DH/NovaPS5/releases/latest)** —
+the file is named `NovaPS5-Setup-<version>.exe`. Every release page also carries `latest.yml` and a
+`.blockmap`; those exist for the built-in updater and are not needed for a manual install.
+
+- **No admin prompt.** The installer runs per-user and can be removed from *Settings ▸ Apps*.
+- **Nothing else to install.** Python is bundled and the AnyPS5 conversion runtime is fetched on first launch.
+- **Self-updating, on your terms.** NovaPS5 checks GitHub on every launch, downloads a newer release in
+  the background, and installs it only when you press **Restart to update**.
 
 ## Features
 
