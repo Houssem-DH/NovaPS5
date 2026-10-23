@@ -1,19 +1,22 @@
 import type { LucideIcon } from 'lucide-react'
-import { Library, Settings, Plus, Cpu } from 'lucide-react'
+import { Library, Settings, Plus, Cpu, Gamepad2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useLibrary } from '@/store/useLibrary'
+import { useStore } from '@/store/useStore'
 import { Button } from '@/components/ui/button'
 
 function NavItem({
   icon: Icon,
   label,
   active,
-  onClick
+  onClick,
+  badge
 }: {
   icon: LucideIcon
   label: string
   active: boolean
   onClick: () => void
+  badge?: number
 }) {
   return (
     <button
@@ -33,18 +36,31 @@ function NavItem({
       />
       <Icon className={cn('h-4 w-4 transition-transform duration-200', !active && 'group-hover:scale-105')} />
       {label}
+      {badge ? (
+        <span className="ml-auto rounded-full bg-secondary px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+          {badge}
+        </span>
+      ) : null}
     </button>
   )
 }
 
 export function Sidebar() {
   const { view, setView, setInstallOpen, appInfo } = useLibrary()
+  const storeCount = useStore((state) => state.entries.length)
   const toolsReady = !!appInfo && appInfo.relinkerPresent && appInfo.libsPresent && !!appInfo.pythonPath
 
   return (
     <aside className="relative flex w-64 shrink-0 flex-col border-r border-border/60 bg-card/40 backdrop-blur-sm">
       <nav className="flex flex-1 flex-col gap-1 p-3 pt-4">
         <NavItem icon={Library} label="Library" active={view === 'library'} onClick={() => setView('library')} />
+        <NavItem
+          icon={Gamepad2}
+          label="Games"
+          active={view === 'store'}
+          onClick={() => setView('store')}
+          badge={storeCount}
+        />
         <NavItem icon={Settings} label="Settings" active={view === 'settings'} onClick={() => setView('settings')} />
       </nav>
 

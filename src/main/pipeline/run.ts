@@ -4,6 +4,8 @@ export interface RunResult {
   code: number
   stdout: string
   stderr: string
+  /** True when the process was killed because it exceeded `timeoutMs`. */
+  timedOut: boolean
 }
 
 export interface RunOptions {
@@ -13,9 +15,48 @@ export interface RunOptions {
   timeoutMs?: number
 }
 
+/**
+ * Kill a child plus everything it spawned. The relinker/CPython can spawn
+ * helpers on Windows; killing only the direct child can leave them holding
+ * file handles inside the staging folder and make cleanup fail.
+ */
+function killTree(child: import('child_process').ChildProcess): void {
+  if (process.platform === 'win32' && child.pid) {
+    try {
+      const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      })
+      killer.on('error', () => {})
+      killer.unref()
+    } catch {
+      /* fall through to child.kill() */
+    }
+  }
+  try {
+    child.kill()
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Spawn a process and resolve with its exit code and captured output. */
 export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
+    let settled = false
+    let timedOut = false
+
+    const finish = (result: RunResult): void => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
+
     const child = spawn(cmd, args, {
       cwd: opts.cwd,
       windowsHide: true,
@@ -30,11 +71,8 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
 
     if (opts.timeoutMs) {
       timer = setTimeout(() => {
-        try {
-          child.kill()
-        } catch {
-          /* ignore */
-        }
+        timedOut = true
+        killTree(child)
       }, opts.timeoutMs)
     }
 
@@ -50,11 +88,11 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
     })
     child.on('error', (err) => {
       if (timer) clearTimeout(timer)
-      reject(err)
+      fail(err)
     })
     child.on('close', (code) => {
       if (timer) clearTimeout(timer)
-      resolve({ code: code ?? -1, stdout, stderr })
+      finish({ code: code ?? -1, stdout, stderr, timedOut })
     })
   })
 }

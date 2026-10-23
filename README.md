@@ -2,7 +2,7 @@
 
 A desktop library, converter and launcher for PS5 game dumps on Windows — **by Nova Crafted**.
 
-Point it at a dump folder (or a `.zip` / `.rar` / `.7z`), and NovaPS5 drives the conversion, installs
+Point it at a dump folder (or a `.zip` / `.rar` / `.7z` / `.tar` archive), and NovaPS5 drives the conversion, installs
 the game, then **launches it once to tell you whether it works**. No command line, no manual tooling.
 
 ![NovaPS5 library](public/logo.png)
@@ -30,6 +30,10 @@ the game, then **launches it once to tell you whether it works**. No command lin
 - **Installs every convertible dump.** Duplicate modules, both `sce_module/` and `sce_modules/`,
   leftover `*.bak*` files, symlinked or odd archive entries and `.rar` / `.7z` sources are all handled
   automatically — the installer never destroys a working install (stage-then-swap).
+- **Loader stand-in libraries are left alone.** `fakelib`-style folders ship fake copies of the console's
+  system libraries for other loaders. They are skipped instead of converted: the runtime provides the
+  real implementations, and relinking the stubs makes the generated entry point abort on imports the
+  runtime does not export (`GetLastError: 127`).
 - **Preflight before install.** The eboot is trial-unwrapped ahead of time, so encrypted or truncated
   dumps are flagged with a plain reason *before* anything is copied; missing runtime libraries are
   predicted too.
@@ -143,7 +147,89 @@ validate → copy to staging → unwrap eboot (SELF → ELF) → unwrap modules 
   decrypted SELF container into a clean ELF using the bundled Python, then the AnyPS5 relinker resolves
   the imports and the AnyPS5 runtime libraries are laid out so the executable starts. NovaPS5 decides
   *what* to convert, prepares the dump so it can be converted, and reports whether the result runs.
-- Conversion is local: nothing is uploaded, and no game content is downloaded.
+- Conversion is local: nothing is uploaded. The only downloads NovaPS5 performs are app/runtime
+  updates and archives you explicitly point it at in the Games catalog (see below).
+
+## Games catalog
+
+The **Games** tab browses the public PlayStation Store catalog for metadata — cover art, publisher,
+release date and genres — and lets you save games to a catalog library. It does **not** show prices
+and does **not** download game content from Sony or any third-party game source.
+
+Installing is driven by files you supply:
+
+- **Self-hosted catalog** — point *Catalog settings* at a JSON catalog you control (see
+  [`docs/store-catalog.md`](docs/store-catalog.md)). Its entries appear first in the catalog and can
+  be downloaded and converted in one click.
+- **Attach a URL** — paste a direct URL to an archive you host on a game's detail page.
+- **Local install** — pick a dump folder or a `.zip`/`.rar`/`.7z`/`.tar` archive from disk.
+
+Downloads stream to `<libraryRoot>/downloads`, are optionally verified against a SHA-256 checksum,
+then go through the same convert/install pipeline as a manual install. Catalog state (region, catalog
+URL and your saved entries) lives in `<libraryRoot>/store.json`.
+
+### Graphics & launch settings
+
+Every installed game has a **Graphics & launch** panel in its library detail page (and in the games
+catalog dialog). NovaPS5 saves the settings per game and applies them to the game process before it
+starts:
+
+- **VSync** — one click on/off. Off uses `immediate`; the advanced selector also exposes FIFO
+  latest ready and mailbox (`ANYPS5_PRESENT_MODE`). Present mode changes latency and tearing, not
+  the frame-rate ceiling: AnyPS5 still paces flips at 59.94 Hz unless the title requests its
+  119.88 Hz output mode.
+- **Vulkan GPU** — leave empty for the first usable device, or name part of a device
+  (`ANYPS5_GPU`).
+- **Performance overlay** — FPS, frame time, graph, draw calls, memory and render/window
+  resolution, with a corner choice (`ANYPS5_OVERLAY`, `ANYPS5_OVERLAY_POS`).
+- **GPU / driver timing** — opt-in overlay lines backed by AnyPS5 profiling
+  (`APS5_PROFILE_GPU`, `APS5_PROFILE_DRAW`). They add overhead, so the overlay marks a profiled
+  run and its numbers are not comparable with a normal one.
+- **Session monitor** — records `videoout.jsonl` locally in a per-launch telemetry folder
+  (`APS5_VIDEOOUT_TELEMETRY_DIR`) and shows a live FPS chart, average, 1% low and sample count in
+  the panel, including the last run after the game exits. NovaPS5 reads only the FPS lines, and
+  explains a stable 60/30 FPS plateau instead of offering a fake unlock.
+- **Shader cache** — keep or disable the shader/pipeline cache (`ANYPS5_NO_SHADER_CACHE`), and clear
+  it if a driver update leaves stale pipelines.
+
+#### Why some games stop at ~60 FPS
+
+AnyPS5 has two vblank/flip clocks: **59.94 Hz** by default and **119.88 Hz** when a title asks for
+its high-frame-rate output mode. The runtime only lets a title ask when both conditions hold:
+
+1. the display showing the game is running at **120 Hz or faster**, and
+2. the title's `app0/sce_sys/param.json` sets **`attribute3` bit `0x40`**, the 120 Hz output flag.
+
+If either condition is missing, flips stay paced at 59.94 Hz in every present mode. A game can also
+hold 60 or 30 FPS on its own (quality/performance mode, internal cap), even on the 120 Hz path.
+NovaPS5 reads the display refresh and the game's `attribute3` flag and shows the reason in the
+Graphics & launch panel and the session monitor. It does not patch game metadata or force the
+119.88 Hz clock: either would bypass a limit the title itself declares and is not a safe "FPS
+unlock".
+
+AnyPS5 0.1.3 renders at the resolution the game chooses and does not expose a render-resolution
+override, FSR, DLSS, a quality preset, a startup window mode, or a refresh-rate override. NovaPS5
+does not fake those controls: use the game's own display/quality menu for resolution and upscaling,
+change the refresh rate in Windows display settings, and press **F11** in-game for AnyPS5's
+borderless desktop fullscreen. A 120 Hz-or-faster display lets the runtime use its 119.88 Hz output
+path, but the game must also advertise 120 Hz output and still decides its own frame rate.
+
+Only fetch archives you have the right to use — dumps of games you own.
+
+#### Why a game can crash right after it starts
+
+Some titles walk the trophy list by calling `sceNpTrophy2GetTrophyInfo` for 0, 1, 2, … and stop when
+the runtime reports the invalid trophy id. On the console that call returns `0x8055390A`
+(`SCE_NP_TROPHY2_ERROR_INVALID_TROPHY_ID`). AnyPS5 0.1.3 instead throws an uncaught
+`std::invalid_argument` when the id is not in the title's `app0/sce_sys/trophy2/trophyNN.ucp`
+package, which aborts the guest process with `0xC0000409` in `ucrtbase.dll` within the first second.
+
+The **Compatibility** panel offers **Compatibility placeholders**: NovaPS5 renames the `.ucp`
+package to `.ucp.disabled` (the file is kept on disk) and the runtime's own fallback answers every
+trophy request with placeholder data and success, so the game runs. Trophy names, descriptions and
+the platinum rule are unavailable until you switch back to **Game's package**. New installs that hit
+this abort during the post-install launch test are retried once with the package hidden, and the
+mode is saved with the game.
 
 ## Credits
 
@@ -176,18 +262,20 @@ If you fork NovaPS5 or ship a build, keep the license, keep the credits above, a
 | --- | --- |
 | `src/main` | Electron main process: window, menu, IPC, library, updater, settings |
 | `src/main/pipeline` | Conversion pipeline (`dump`, `compat`, `install`, `verify`, `relink`, `elf`) |
+| `src/main/store` | Games catalog (PS Store metadata), self-hosted catalog, persistence, download/install |
 | `src/preload` | `contextBridge` API exposed to the renderer |
-| `src/renderer` | React UI (library, detail, settings, install dialog, bootstrap) |
+| `src/renderer` | React UI (library, games catalog, detail, settings, install dialog, bootstrap) |
 | `src/shared` | Types shared across processes |
 | `scripts` | Runtime/python setup, icon generation, dist wrapper, AnyPS5's `unwrap_self.py` |
 | `public` | Brand assets (`icon.png`, `logo.png`, `favicon.ico`) |
 | `build` | Installer/exe icon + the icon generator script |
-| `docs/releases` | Release notes kept with the code, ready to paste into a GitHub release |
+| `docs` | Release notes and the self-hosted catalog format |
+| `resources/store` | Example self-hosted catalog |
 
 ## Notes
 
-- Use dumps of games you own. NovaPS5 is a local converter — it ships no game content and has no
-  downloader.
+- Use dumps of games you own. NovaPS5 is a local converter — the Games catalog only reads metadata
+  from the PlayStation Store; installs come from archives or dumps you supply.
 - Closing the window keeps NovaPS5 running in the tray (click the tray icon to bring it back); quit
   from the tray menu or with `Ctrl+Q`.
 - Text is selectable everywhere it is useful (paths, verdicts, release notes) — `Ctrl+C`, right-click →

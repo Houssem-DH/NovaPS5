@@ -9,6 +9,7 @@ const os = require("os");
 const electronUpdater = require("electron-updater");
 const fs$1 = require("node:fs");
 const path$1 = require("node:path");
+const url = require("url");
 const DEFAULT_RUNTIME_REPO = "boykopovar/AnyPS5";
 const APP_REPO = "Houssem-DH/NovaPS5";
 let toolsOverride = null;
@@ -75,6 +76,9 @@ function gamesRoot() {
   if (custom) return custom;
   return path.join(libraryRoot(), "games");
 }
+function downloadsRoot() {
+  return path.join(libraryRoot(), "downloads");
+}
 function runtimeRepo() {
   return loadConfig().runtimeRepo || DEFAULT_RUNTIME_REPO;
 }
@@ -108,75 +112,288 @@ function toolingPresent() {
     unwrap: fs.existsSync(unwrapScriptPath())
   };
 }
-let cache = null;
-async function load() {
-  if (cache) return cache;
-  cache = { games: [] };
+const DEFAULT_GAME_GRAPHICS = {
+  presentMode: "fifo",
+  overlayPosition: "tl"
+};
+function normalizeGameGraphics(value) {
+  const presentMode = value?.presentMode === "fifo" || value?.presentMode === "fifo_latest_ready" || value?.presentMode === "mailbox" || value?.presentMode === "immediate" ? value.presentMode : DEFAULT_GAME_GRAPHICS.presentMode;
+  const overlayPosition = value?.overlayPosition === "tl" || value?.overlayPosition === "tr" || value?.overlayPosition === "bl" || value?.overlayPosition === "br" ? value.overlayPosition : DEFAULT_GAME_GRAPHICS.overlayPosition;
+  return {
+    presentMode,
+    gpu: typeof value?.gpu === "string" && value.gpu.trim() ? value.gpu.trim() : null,
+    overlay: value?.overlay === true,
+    overlayPosition,
+    shaderCache: value?.shaderCache !== false,
+    gpuProfile: value?.gpuProfile === true,
+    drawProfile: value?.drawProfile === true,
+    telemetry: value?.telemetry !== false
+  };
+}
+function normalizeGameCompatibility(value) {
+  return {
+    trophyData: value?.trophyData === "placeholders" ? "placeholders" : "package"
+  };
+}
+const TROPHY_HIDDEN_SUFFIX = ".disabled";
+const PACKAGE_FILE = /^trophy\d{2}\.ucp(\.disabled)?$/i;
+const UCP_MAGIC = 2989016586;
+const UCP_VERSION = 1;
+const UCP_HEADER_SIZE = 64;
+const UCP_TOC_HEADER_SIZE = 32;
+const UCP_ENTRY_SIZE = 64;
+const UCP_NAME_SIZE = 32;
+const UCP_MAX_ENTRIES = 4096;
+const UCP_MAX_CONF_BYTES = 4 * 1024 * 1024;
+function trophyPackageDir(installPath) {
+  return path.join(installPath, "app0", "sce_sys", "trophy2");
+}
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function isHidden(file) {
+  return file.toLowerCase().endsWith(TROPHY_HIDDEN_SUFFIX);
+}
+function packageNameOf(file) {
+  return isHidden(file) ? file.slice(0, -TROPHY_HIDDEN_SUFFIX.length) : file;
+}
+function bigEndian(buffer, offset, size) {
+  let value = 0;
+  for (let index = 0; index < size; index += 1) {
+    value = value * 256 + buffer[offset + index];
+  }
+  return value;
+}
+async function readTrophyCount(file) {
+  let handle = null;
+  try {
+    handle = await fs.promises.open(file, "r");
+    const header = Buffer.alloc(UCP_HEADER_SIZE);
+    const headerRead = await handle.read(header, 0, UCP_HEADER_SIZE, 0);
+    if (headerRead.bytesRead < UCP_HEADER_SIZE) return { trophyCount: null, idRange: null };
+    if (bigEndian(header, 0, 4) !== UCP_MAGIC || bigEndian(header, 4, 4) !== UCP_VERSION) {
+      return { trophyCount: null, idRange: null };
+    }
+    const totalSize = bigEndian(header, 8, 8);
+    const count = bigEndian(header, 16, 4);
+    const toc = bigEndian(header, 20, 4);
+    if (count <= 0 || count > UCP_MAX_ENTRIES || toc < UCP_HEADER_SIZE || UCP_TOC_HEADER_SIZE + count * UCP_ENTRY_SIZE > totalSize) {
+      return { trophyCount: null, idRange: null };
+    }
+    const tocBytes = Buffer.alloc(UCP_TOC_HEADER_SIZE + count * UCP_ENTRY_SIZE);
+    const tocRead = await handle.read(tocBytes, 0, tocBytes.length, toc);
+    if (tocRead.bytesRead < tocBytes.length) return { trophyCount: null, idRange: null };
+    let entryOffset = null;
+    let entrySize = 0;
+    for (let index = 0; index < count; index += 1) {
+      const entry = UCP_TOC_HEADER_SIZE + index * UCP_ENTRY_SIZE;
+      const name = tocBytes.subarray(entry, entry + UCP_NAME_SIZE).toString("utf8").replace(/\0.*$/s, "");
+      if (name !== "tropconf.json") continue;
+      entryOffset = bigEndian(tocBytes, entry + UCP_NAME_SIZE, 8);
+      entrySize = bigEndian(tocBytes, entry + UCP_NAME_SIZE + 8, 8);
+      break;
+    }
+    if (entryOffset === null || entrySize === 0 || entrySize > UCP_MAX_CONF_BYTES) {
+      return { trophyCount: null, idRange: null };
+    }
+    const conf = Buffer.alloc(entrySize);
+    const confRead = await handle.read(conf, 0, entrySize, entryOffset);
+    if (confRead.bytesRead < entrySize) return { trophyCount: null, idRange: null };
+    const parsed = JSON.parse(conf.toString("utf8").replace(/^\uFEFF/, ""));
+    if (!Array.isArray(parsed.trophies)) return { trophyCount: null, idRange: null };
+    const ids = parsed.trophies.map((trophy) => trophy.id).filter((id) => typeof id === "string" || typeof id === "number").map((id) => String(id)).sort();
+    return {
+      trophyCount: parsed.trophies.length,
+      idRange: ids.length > 0 ? [ids[0], ids[ids.length - 1]] : null
+    };
+  } catch {
+    return { trophyCount: null, idRange: null };
+  } finally {
+    if (handle) await handle.close().catch(() => {
+    });
+  }
+}
+async function readTrophyPackages(installPath) {
+  const dir = trophyPackageDir(installPath);
+  let names;
+  try {
+    names = (await fs.promises.readdir(dir)).filter((name) => PACKAGE_FILE.test(name));
+  } catch (error) {
+    if (error.code === "ENOENT") return { dir, files: [] };
+    return { dir, files: [], error: messageOf(error) };
+  }
+  const files = [];
+  for (const name of names.sort()) {
+    const full = path.join(dir, name);
+    let sizeBytes = 0;
+    try {
+      sizeBytes = (await fs.promises.stat(full)).size;
+    } catch {
+    }
+    const hidden = isHidden(name);
+    const details = await readTrophyCount(full);
+    files.push({
+      file: name,
+      packageName: packageNameOf(name),
+      disabled: hidden,
+      sizeBytes,
+      ...details
+    });
+  }
+  files.sort(
+    (a, b) => a.packageName === b.packageName ? Number(a.disabled) - Number(b.disabled) : a.packageName.localeCompare(b.packageName)
+  );
+  return { dir, files };
+}
+async function setTrophyDataMode(installPath, mode) {
+  const dir = trophyPackageDir(installPath);
+  let names;
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch (error) {
+    if (error.code === "ENOENT") return { changed: [] };
+    return { changed: [], error: `Could not read ${dir}: ${messageOf(error)}` };
+  }
+  const changed = [];
+  const errors = [];
+  const present = new Set(names.map((name) => name.toLowerCase()));
+  const rename = async (from, to) => {
+    try {
+      await fs.promises.rename(path.join(dir, from), path.join(dir, to));
+      changed.push(from);
+    } catch (error) {
+      errors.push(`${from}: ${messageOf(error)}`);
+    }
+  };
+  if (mode === "placeholders") {
+    for (const name of names) {
+      if (isHidden(name) || !PACKAGE_FILE.test(name)) continue;
+      if (present.has(`${name}${TROPHY_HIDDEN_SUFFIX}`.toLowerCase())) continue;
+      await rename(name, `${name}${TROPHY_HIDDEN_SUFFIX}`);
+    }
+  } else {
+    for (const name of names) {
+      if (!isHidden(name)) continue;
+      const restored = packageNameOf(name);
+      if (present.has(restored.toLowerCase())) continue;
+      await rename(name, restored);
+    }
+  }
+  return errors.length > 0 ? { changed, error: `Could not update the trophy package: ${errors.join("; ")}` } : { changed };
+}
+let cache$3 = null;
+async function load$1() {
+  if (cache$3) return cache$3;
+  cache$3 = { games: [] };
   try {
     const raw = await fs.promises.readFile(libraryFile(), "utf8");
     const text = raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
     const parsed = JSON.parse(text);
-    cache = { games: Array.isArray(parsed.games) ? parsed.games : [] };
+    cache$3 = { games: Array.isArray(parsed.games) ? parsed.games : [] };
   } catch {
     try {
       const backup = await fs.promises.readFile(`${libraryFile()}.bak`, "utf8");
       const text = backup.charCodeAt(0) === 65279 ? backup.slice(1) : backup;
       const parsed = JSON.parse(text);
-      if (Array.isArray(parsed.games)) cache = { games: parsed.games };
+      if (Array.isArray(parsed.games)) cache$3 = { games: parsed.games };
     } catch {
     }
   }
-  return cache;
+  return cache$3;
 }
-async function persist() {
-  if (!cache) return;
+async function persist$1() {
+  if (!cache$3) return;
   ensureDir(path.dirname(libraryFile()));
   const file = libraryFile();
   const tmp = `${file}.tmp`;
-  await fs.promises.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
+  await fs.promises.writeFile(tmp, JSON.stringify(cache$3, null, 2), "utf8");
   await fs.promises.copyFile(file, `${file}.bak`).catch(() => {
   });
   await fs.promises.rename(tmp, file);
 }
 function slugify(name) {
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  return slug || "game";
+  const slug2 = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug2 || "game";
 }
 async function listGames() {
-  const data = await load();
+  const data = await load$1();
   return [...data.games].sort((a, b) => b.installedAt - a.installedAt);
 }
 async function getGame(id) {
-  const data = await load();
+  const data = await load$1();
   return data.games.find((game) => game.id === id);
 }
 async function addGame(game) {
-  const data = await load();
+  const data = await load$1();
   const index = data.games.findIndex((g) => g.id === game.id);
-  if (index >= 0) data.games[index] = game;
-  else data.games.push(game);
-  await persist();
+  if (index >= 0) {
+    const previous = data.games[index];
+    game.graphics ??= previous.graphics;
+    game.compatibility ??= previous.compatibility;
+    game.lastPlayedAt ??= previous.lastPlayedAt;
+    data.games[index] = game;
+  } else {
+    data.games.push(game);
+  }
+  await persist$1();
 }
 async function removeGame(id) {
-  const data = await load();
+  const data = await load$1();
   const game = data.games.find((g) => g.id === id);
   data.games = data.games.filter((g) => g.id !== id);
-  await persist();
+  await persist$1();
   if (game) {
     await fs.promises.rm(game.installPath, { recursive: true, force: true }).catch(() => {
     });
   }
 }
 async function touchPlay(id) {
-  const data = await load();
+  const data = await load$1();
   const game = data.games.find((g) => g.id === id);
   if (game) {
     game.lastPlayedAt = Date.now();
-    await persist();
+    await persist$1();
+  }
+}
+async function setGameGraphics(id, patch) {
+  const data = await load$1();
+  const game = data.games.find((g) => g.id === id);
+  if (!game) throw new Error("Game not found in library.");
+  game.graphics = normalizeGameGraphics({ ...game.graphics ?? {}, ...patch });
+  await persist$1();
+  return game;
+}
+async function setGameCompatibility(id, patch) {
+  const data = await load$1();
+  const game = data.games.find((g) => g.id === id);
+  if (!game) throw new Error("Game not found in library.");
+  const compatibility = normalizeGameCompatibility({
+    ...game.compatibility ?? {},
+    ...patch
+  });
+  const applied = await setTrophyDataMode(game.installPath, compatibility.trophyData);
+  if (applied.error) throw new Error(applied.error);
+  game.compatibility = compatibility;
+  await persist$1();
+  return game;
+}
+async function clearShaderCache(id) {
+  const game = await getGame(id);
+  if (!game) return { ok: false, error: "Game not found in library." };
+  const dir = path.join(game.installPath, "shader_cache");
+  try {
+    const freedBytes = await dirSize$1(dir);
+    await fs.promises.rm(dir, { recursive: true, force: true });
+    return { ok: true, freedBytes };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
   }
 }
 async function relocateGames(updates) {
-  const data = await load();
+  const data = await load$1();
   for (const update of updates) {
     const game = data.games.find((g) => g.id === update.id);
     if (game) {
@@ -184,7 +401,7 @@ async function relocateGames(updates) {
       game.exePath = update.exePath;
     }
   }
-  await persist();
+  await persist$1();
 }
 async function exists(target) {
   try {
@@ -233,20 +450,21 @@ async function looksInstalled(dir) {
   }
 }
 async function scanLibrary() {
-  cache = null;
-  const data = await load();
+  cache$3 = null;
+  const data = await load$1();
   const summary = { added: 0, missing: 0, repaired: 0 };
   for (const game of data.games) {
     const exeOk = await exists(game.exePath);
     const dirOk = await exists(game.installPath);
-    if (exeOk) {
+    const conversionFailure = game.status === "error" && !!game.error?.startsWith("Conversion failed");
+    if (exeOk && !conversionFailure) {
       if (game.status !== "ready" || game.error) {
         game.status = "ready";
         delete game.error;
         summary.repaired++;
       }
     } else {
-      const detail = dirOk ? "The game executable is missing — reinstall the game." : "The install folder is gone.";
+      const detail = conversionFailure && dirOk ? game.error : dirOk ? "The game executable is missing — reinstall the game." : "The install folder is gone.";
       if (game.status !== "error" || game.error !== detail) {
         game.status = "error";
         game.error = detail;
@@ -288,20 +506,186 @@ async function scanLibrary() {
     data.games.push(game);
     summary.added++;
   }
-  if (summary.added > 0 || summary.missing > 0 || summary.repaired > 0) await persist();
+  if (summary.added > 0 || summary.missing > 0 || summary.repaired > 0) await persist$1();
   const games = [...data.games].sort((a, b) => b.installedAt - a.installedAt);
   return { games, summary };
+}
+const MAX_SAMPLES = 240;
+const TAIL_BYTES = 512 * 1024;
+const KEEP_TELEMETRY_SESSIONS = 20;
+const sessions = /* @__PURE__ */ new Map();
+function telemetryRoot() {
+  return path.join(electron.app.getPath("userData"), "telemetry");
+}
+async function createTelemetryDir(gameId) {
+  const safeId = gameId.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "game";
+  const parent = path.join(telemetryRoot(), safeId);
+  const dir = path.join(parent, String(Date.now()));
+  await fs.promises.mkdir(dir, { recursive: true });
+  try {
+    const entries = await fs.promises.readdir(parent, { withFileTypes: true });
+    const previous = entries.filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name)).map((entry) => entry.name).sort();
+    for (const stale of previous.slice(0, Math.max(0, previous.length - KEEP_TELEMETRY_SESSIONS))) {
+      await fs.promises.rm(path.join(parent, stale), { recursive: true, force: true });
+    }
+  } catch {
+  }
+  return dir;
+}
+function beginSession(gameId, pid, telemetryDir) {
+  sessions.set(gameId, {
+    gameId,
+    pid,
+    startedAt: Date.now(),
+    telemetryPath: telemetryDir ? path.join(telemetryDir, "videoout.jsonl") : null,
+    samples: [],
+    dropped: 0,
+    lastSampleAt: void 0,
+    telemetrySize: void 0,
+    telemetryMtimeMs: void 0
+  });
+}
+function finishSession(gameId, pid) {
+  const session = sessions.get(gameId);
+  if (!session) return;
+  if (pid !== void 0 && session.pid !== void 0 && session.pid !== pid) return;
+  session.endedAt = Date.now();
+}
+function parseTelemetry(text, fromStart) {
+  const lines = text.split("\n");
+  if (!fromStart && lines.length > 0) lines.shift();
+  const samples = [];
+  let dropped = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const entry = JSON.parse(trimmed);
+      if (entry.ev === "present" && typeof entry.fps === "number" && Number.isFinite(entry.fps) && typeof entry.t_ns === "number") {
+        samples.push({ t: Math.round(entry.t_ns / 1e6), fps: Math.max(0, entry.fps) });
+      } else if (entry.ev === "drops" && typeof entry.dropped === "number") {
+        dropped = Math.max(dropped, entry.dropped);
+      }
+    } catch {
+    }
+  }
+  return { samples, dropped };
+}
+async function readTelemetryFile(file) {
+  let handle = null;
+  try {
+    handle = await fs.promises.open(file, "r");
+    const stat = await handle.stat();
+    const fromStart = stat.size <= TAIL_BYTES;
+    const start = fromStart ? 0 : Math.max(0, stat.size - TAIL_BYTES - 1);
+    const length = stat.size - start;
+    if (length <= 0) return { samples: [], dropped: 0 };
+    const buffer = Buffer.alloc(Number(length));
+    await handle.read(buffer, 0, buffer.length, start);
+    return parseTelemetry(buffer.toString("utf8"), fromStart);
+  } catch {
+    return { samples: [], dropped: 0 };
+  } finally {
+    await handle?.close().catch(() => void 0);
+  }
+}
+async function readSession(gameId) {
+  const session = sessions.get(gameId);
+  if (!session) {
+    return { active: false, telemetry: false, samples: [], dropped: 0 };
+  }
+  if (session.telemetryPath) {
+    try {
+      const stat = await fs.promises.stat(session.telemetryPath);
+      const changed = stat.size !== session.telemetrySize || stat.mtimeMs !== session.telemetryMtimeMs;
+      if (changed) {
+        session.telemetrySize = stat.size;
+        session.telemetryMtimeMs = stat.mtimeMs;
+        const { samples, dropped } = await readTelemetryFile(session.telemetryPath);
+        if (samples.length > 0) {
+          const previousLast = session.samples[session.samples.length - 1]?.t;
+          const nextLast = samples[samples.length - 1]?.t;
+          if (previousLast === void 0 || nextLast !== void 0 && nextLast > previousLast) {
+            session.lastSampleAt = Date.now();
+          }
+          session.samples = samples.slice(-MAX_SAMPLES);
+        }
+        if (dropped > session.dropped) session.dropped = dropped;
+      }
+    } catch {
+    }
+  }
+  const active2 = session.endedAt === void 0;
+  return {
+    active: active2,
+    pid: session.pid,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    telemetry: session.telemetryPath !== null,
+    samples: session.samples,
+    dropped: session.dropped,
+    lastSampleAt: session.lastSampleAt
+  };
+}
+function graphicsEnvironment(graphics) {
+  const settings = normalizeGameGraphics(graphics);
+  const env = { ...process.env };
+  env.ANYPS5_PRESENT_MODE = settings.presentMode;
+  const gpu = settings.gpu?.trim();
+  if (gpu) env.ANYPS5_GPU = gpu;
+  else delete env.ANYPS5_GPU;
+  if (settings.overlay) {
+    env.ANYPS5_OVERLAY = "1";
+    env.ANYPS5_OVERLAY_POS = settings.overlayPosition;
+  } else {
+    delete env.ANYPS5_OVERLAY;
+    delete env.ANYPS5_OVERLAY_POS;
+  }
+  if (settings.shaderCache) delete env.ANYPS5_NO_SHADER_CACHE;
+  else env.ANYPS5_NO_SHADER_CACHE = "1";
+  if (settings.gpuProfile) env.APS5_PROFILE_GPU = "1";
+  else delete env.APS5_PROFILE_GPU;
+  if (settings.drawProfile) env.APS5_PROFILE_DRAW = "1";
+  else delete env.APS5_PROFILE_DRAW;
+  return env;
 }
 async function launchGame(id) {
   const game = await getGame(id);
   if (!game) return { ok: false, error: "Game not found in library." };
+  if (game.status === "error") {
+    return { ok: false, error: game.error ?? "This game is not working and cannot be launched." };
+  }
+  const graphics = normalizeGameGraphics(game.graphics);
+  const env = graphicsEnvironment(graphics);
+  const compatibility = normalizeGameCompatibility(game.compatibility);
+  const trophies = await setTrophyDataMode(game.installPath, compatibility.trophyData);
+  if (trophies.error) return { ok: false, error: trophies.error };
+  let telemetryDir = null;
+  if (graphics.telemetry) {
+    try {
+      telemetryDir = await createTelemetryDir(game.id);
+      env.APS5_VIDEOOUT_TELEMETRY_DIR = telemetryDir;
+    } catch {
+      delete env.APS5_VIDEOOUT_TELEMETRY_DIR;
+    }
+  } else {
+    delete env.APS5_VIDEOOUT_TELEMETRY_DIR;
+  }
   try {
     const child = child_process.spawn(game.exePath, [], {
       cwd: game.installPath,
       detached: true,
       stdio: "ignore",
-      windowsHide: false
+      windowsHide: false,
+      env
     });
+    child.on("error", () => {
+      if (child.pid !== void 0) finishSession(id, child.pid);
+    });
+    if (child.pid !== void 0) {
+      beginSession(id, child.pid, telemetryDir);
+      child.on("exit", () => finishSession(id, child.pid));
+    }
     child.unref();
     await touchPlay(id);
     return { ok: true };
@@ -309,9 +693,56 @@ async function launchGame(id) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
+const ATTRIBUTE3_HIGH_FRAME_RATE = 64;
+function attribute3Of(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { value: null, detail: "The game’s param.json is not valid JSON." };
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return { value: null, detail: "The game’s param.json is not a JSON object." };
+  }
+  const value = parsed.attribute3;
+  if (value === void 0) {
+    return {
+      value: 0,
+      detail: "The game’s param.json has no attribute3 field, so the runtime treats it as 0."
+    };
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 4294967295) {
+    return {
+      value: null,
+      detail: "The game’s param.json has an attribute3 value the runtime does not accept."
+    };
+  }
+  return { value: value >>> 0 };
+}
+async function readPerformanceProfile(game) {
+  const paramJson = path.join(game.installPath, "app0", "sce_sys", "param.json");
+  let raw;
+  try {
+    raw = await fs.promises.readFile(paramJson, "utf8");
+  } catch {
+    return {
+      attribute3: null,
+      highFrameRate: null,
+      source: "none",
+      detail: "NovaPS5 could not read this game’s app0/sce_sys/param.json, so its 120 Hz output flag is unknown."
+    };
+  }
+  const { value, detail } = attribute3Of(raw);
+  return {
+    attribute3: value,
+    highFrameRate: value === null ? null : (value & ATTRIBUTE3_HIGH_FRAME_RATE) !== 0,
+    source: "param.json",
+    detail
+  };
+}
 const SELF_MAGIC = Buffer.from([79, 21, 61, 29]);
 const SELF_KERNEL_MAGIC = Buffer.from([84, 20, 245, 238]);
-const ELF_MAGIC$1 = Buffer.from([127, 69, 76, 70]);
+const ELF_MAGIC = Buffer.from([127, 69, 76, 70]);
 const PE_MAGIC = Buffer.from([77, 90]);
 function detectContainer(file) {
   let fd;
@@ -320,12 +751,106 @@ function detectContainer(file) {
     const buf = Buffer.alloc(4);
     const read = fs.readSync(fd, buf, 0, 4, 0);
     if (read < 2) return "unknown";
-    if (buf.subarray(0, 4).equals(ELF_MAGIC$1)) return "elf";
+    if (buf.subarray(0, 4).equals(ELF_MAGIC)) return "elf";
     if (buf.subarray(0, 4).equals(SELF_MAGIC) || buf.subarray(0, 4).equals(SELF_KERNEL_MAGIC)) return "self";
     if (buf.subarray(0, 2).equals(PE_MAGIC)) return "pe";
     return "unknown";
   } catch {
     return "unknown";
+  } finally {
+    if (fd !== void 0) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+      }
+    }
+  }
+}
+function readElfDynamicInfo(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const head = Buffer.alloc(64);
+    if (fs.readSync(fd, head, 0, 64, 0) < 52) return null;
+    if (!head.subarray(0, 4).equals(ELF_MAGIC)) return null;
+    if (head[5] !== 1) return null;
+    const is64 = head[4] === 2;
+    const phoff = Number(is64 ? head.readBigUInt64LE(32) : head.readUInt32LE(28));
+    const phentsize = head.readUInt16LE(is64 ? 54 : 42);
+    const phnum = head.readUInt16LE(is64 ? 56 : 44);
+    if (phnum === 0 || phnum > 1024 || phentsize < (is64 ? 56 : 32)) return null;
+    const loads = [];
+    let dynOff = -1;
+    let dynSize = 0;
+    const phdr = Buffer.alloc(phentsize);
+    for (let i = 0; i < phnum; i++) {
+      if (fs.readSync(fd, phdr, 0, phentsize, phoff + i * phentsize) < phentsize) return null;
+      const type = phdr.readUInt32LE(0);
+      if (is64) {
+        const off = Number(phdr.readBigUInt64LE(8));
+        const vaddr = Number(phdr.readBigUInt64LE(16));
+        const filesz = Number(phdr.readBigUInt64LE(32));
+        if (type === 1) loads.push({ vaddr, off, filesz });
+        else if (type === 2) {
+          dynOff = off;
+          dynSize = filesz;
+        }
+      } else {
+        const off = phdr.readUInt32LE(4);
+        const vaddr = phdr.readUInt32LE(8);
+        const filesz = phdr.readUInt32LE(16);
+        if (type === 1) loads.push({ vaddr, off, filesz });
+        else if (type === 2) {
+          dynOff = off;
+          dynSize = filesz;
+        }
+      }
+    }
+    if (dynOff < 0 || dynSize <= 0) return { needed: [], soname: null };
+    const vaddrToOff = (vaddr) => {
+      for (const load2 of loads) {
+        if (vaddr >= load2.vaddr && vaddr < load2.vaddr + load2.filesz) {
+          return load2.off + (vaddr - load2.vaddr);
+        }
+      }
+      return -1;
+    };
+    const entrySize = is64 ? 16 : 8;
+    const dyn = Buffer.alloc(Math.min(dynSize, entrySize * 4096));
+    const dynRead = fs.readSync(fd, dyn, 0, dyn.length, dynOff);
+    if (dynRead < entrySize) return { needed: [], soname: null };
+    const tags = [];
+    for (let o = 0; o + entrySize <= dynRead; o += entrySize) {
+      const tag = is64 ? Number(dyn.readBigInt64LE(o)) : dyn.readInt32LE(o);
+      if (tag === 0) break;
+      const val = is64 ? Number(dyn.readBigUInt64LE(o + 8)) : dyn.readUInt32LE(o + 4);
+      tags.push({ tag, val });
+    }
+    const strtabVal = tags.find((t) => t.tag === 5)?.val;
+    if (strtabVal === void 0) return { needed: [], soname: null };
+    const strOff = vaddrToOff(strtabVal);
+    if (strOff < 0) return null;
+    const strsz = tags.find((t) => t.tag === 10)?.val ?? 65536;
+    const strtab = Buffer.alloc(Math.min(strsz, 4 << 20));
+    const strRead = fs.readSync(fd, strtab, 0, strtab.length, strOff);
+    if (strRead <= 0) return null;
+    const stringAt = (offset) => {
+      if (offset < 0 || offset >= strRead) return null;
+      const end = strtab.indexOf(0, offset);
+      const name = strtab.subarray(offset, end === -1 ? strRead : end).toString("latin1");
+      return name || null;
+    };
+    const needed = [];
+    for (const { tag, val } of tags) {
+      if (tag !== 1) continue;
+      const name = stringAt(val);
+      if (name) needed.push(name);
+    }
+    const sonameTag = tags.find((t) => t.tag === 14);
+    const soname = sonameTag ? stringAt(sonameTag.val) : null;
+    return { needed, soname };
+  } catch {
+    return null;
   } finally {
     if (fd !== void 0) {
       try {
@@ -354,8 +879,38 @@ function readMagicHex(file) {
     }
   }
 }
+function killTree(child) {
+  if (process.platform === "win32" && child.pid) {
+    try {
+      const killer = child_process.spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore"
+      });
+      killer.on("error", () => {
+      });
+      killer.unref();
+    } catch {
+    }
+  }
+  try {
+    child.kill();
+  } catch {
+  }
+}
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let timedOut = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     const child = child_process.spawn(cmd, args, {
       cwd: opts.cwd,
       windowsHide: true,
@@ -368,10 +923,8 @@ function run(cmd, args, opts = {}) {
     let timer;
     if (opts.timeoutMs) {
       timer = setTimeout(() => {
-        try {
-          child.kill();
-        } catch {
-        }
+        timedOut = true;
+        killTree(child);
       }, opts.timeoutMs);
     }
     child.stdout.on("data", (d) => {
@@ -386,11 +939,11 @@ function run(cmd, args, opts = {}) {
     });
     child.on("error", (err) => {
       if (timer) clearTimeout(timer);
-      reject(err);
+      fail(err);
     });
     child.on("close", (code) => {
       if (timer) clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout, stderr });
+      finish({ code: code ?? -1, stdout, stderr, timedOut });
     });
   });
 }
@@ -447,12 +1000,47 @@ async function unwrapSelf(input, output, verbose = false) {
       "No Python 3 interpreter is available. NovaPS5 bundles one — repair or reinstall the app."
     );
   }
-  const args = [...python.args, unwrapScriptPath(), input, output];
-  if (verbose) args.push("--verbose");
-  const { code, stdout, stderr } = await run(python.cmd, args, { timeoutMs: 10 * 60 * 1e3 });
-  if (code !== 0) {
-    const detail = /not a SELF container/i.test(stderr) ? `${path.basename(input)} is not a SELF container.` : /looks encrypted/i.test(stderr) ? `${path.basename(input)} is still encrypted — dump it decrypted before converting.` : stderr.trim() || stdout.trim() || `exit code ${code}`;
-    throw new Error(`Unwrap failed — ${detail}`);
+  const inPlace = path.resolve(input) === path.resolve(output);
+  const target = inPlace ? path.join(
+    path.dirname(output),
+    `.${path.basename(output)}.novaps5-unwrap-${process.pid}-${Date.now()}.tmp`
+  ) : output;
+  try {
+    await fs.promises.rm(target, { force: true }).catch(() => {
+    });
+    const args = [...python.args, unwrapScriptPath(), input, target];
+    if (verbose) args.push("--verbose");
+    const result = await run(python.cmd, args, { timeoutMs: 10 * 60 * 1e3 });
+    if (result.timedOut) {
+      throw new Error(`${path.basename(input)} could not be unwrapped — the step timed out.`);
+    }
+    if (result.code !== 0) {
+      const { stderr, stdout } = result;
+      const detail = /not a SELF container/i.test(stderr) ? `${path.basename(input)} is not a SELF container.` : /looks encrypted/i.test(stderr) ? `${path.basename(input)} is still encrypted — dump it decrypted before converting.` : stderr.trim() || stdout.trim() || `the unwrapper exited with code ${result.code}`;
+      throw new Error(detail);
+    }
+    const kind = detectContainer(target);
+    if (kind !== "elf") {
+      throw new Error(
+        kind === "unknown" ? `${path.basename(input)} did not produce a usable ELF — the file is truncated or uses an unsupported container.` : `${path.basename(input)} unwrapped to a ${kind.toUpperCase()} file instead of an ELF — the container is malformed.`
+      );
+    }
+    if (inPlace) await fs.promises.rename(target, output);
+  } catch (error) {
+    await fs.promises.rm(target, { force: true }).catch(() => {
+    });
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(/^Unwrap failed\b/.test(message) ? message : `Unwrap failed — ${message}`);
+  }
+}
+class RelinkError extends Error {
+  detail;
+  output;
+  constructor(detail, output) {
+    super(`Conversion failed — ${explainRelinkFailure(detail)}`);
+    this.name = "RelinkError";
+    this.detail = detail;
+    this.output = output;
   }
 }
 function explainRelinkFailure(detail) {
@@ -467,7 +1055,15 @@ function explainRelinkFailure(detail) {
     ],
     [
       /^Ambiguous guest module identity: (.+)$/i,
-      (m) => `Several modules identify as "${m[1]}" — remove the duplicate copies from the dump.`
+      (m) => `Several modules identify as "${m[1]}" (same SONAME in different folders) — remove the duplicate copies from the dump.`
+    ],
+    [
+      /^Unsupported (?:Windows )?guest filename: (.+)$/i,
+      (m) => `The module filename "${m[1]}" contains characters Windows cannot use — rename that module inside the dump and retry.`
+    ],
+    [
+      /^Neither DT_OS_ nor DT_ variant present for DT_SYMTAB/i,
+      () => "The executable has no usable dynamic symbol table — it is not a standard PS5 ELF. Re-extract the dump; if it still fails, the eboot is unsupported."
     ],
     [
       /^Both sce_module and sce_modules exist/i,
@@ -475,11 +1071,23 @@ function explainRelinkFailure(detail) {
     ],
     [
       /^Guest module parent directory does not exist/i,
-      () => "No sce_module/ folder was found — this dump ships no loadable modules for the converter."
+      () => "The dump has no module folder and the converter could not create one — check that the games folder is writable and retry."
+    ],
+    [
+      /^Guest module path is not a directory: (.+)$/i,
+      (m) => `The module folder "${m[1]}" is missing or is not a folder — retry the installation.`
+    ],
+    [
+      /^Duplicate guest module directory: (.+)$/i,
+      (m) => `The module folder "${m[1]}" was passed more than once — retry the installation; the duplicate scan is automatic.`
     ],
     [
       /^Excluded guest module file not found/i,
       () => "The dump layout changed mid-conversion — retry the installation."
+    ],
+    [
+      /cannot (?:read|open) (?:the )?(?:input|executable)/i,
+      () => "The unwrapped eboot could not be read — re-import the dump."
     ]
   ];
   for (const [pattern, describe] of rules) {
@@ -488,21 +1096,42 @@ function explainRelinkFailure(detail) {
   }
   return detail;
 }
-async function relink(inputElf, outputExe, onOutput, cwd, moduleDirs = []) {
-  const args = ["--windows"];
-  for (const dir of moduleDirs) args.push("--module-dir", dir);
-  args.push(inputElf, outputExe);
-  const { code, stdout, stderr } = await run(
-    relinkerPath(),
-    args,
-    { onOutput, cwd, timeoutMs: 30 * 60 * 1e3 }
-  );
-  if (code !== 0) {
-    const detail = extractFailure(`${stderr}
-${stdout}`) ?? `relinker exited with code ${code}`;
-    throw new Error(`Conversion failed — ${explainRelinkFailure(detail)}`);
+function findSkippedSelf(stdout) {
+  const skipped = [];
+  const pattern = /Skipping SELF container:\s*([^\r\n]+)/gi;
+  for (let match = pattern.exec(stdout); match; match = pattern.exec(stdout)) {
+    const name = match[1].replace(/\s*\([^)]*\)\s*$/, "").trim();
+    if (name) skipped.push(name);
   }
-  return { stdout, stderr };
+  return skipped;
+}
+async function relink(inputElf, outputExe, options = {}) {
+  const args = ["--windows"];
+  if (options.windowsDiagnostics !== false) args.push("--windows-diagnostics");
+  for (const dir of options.moduleDirs ?? []) args.push("--module-dir", dir);
+  for (const name of options.excludeModules ?? []) args.push("--exclude-sce-module", name);
+  args.push(inputElf, outputExe);
+  const result = await run(relinkerPath(), args, {
+    onOutput: options.onOutput,
+    cwd: options.cwd,
+    timeoutMs: 30 * 60 * 1e3
+  });
+  if (result.timedOut) {
+    throw new Error(
+      `Conversion failed — the converter ran for over 30 minutes on ${path.basename(inputElf)} and was stopped. The dump may contain an unusually large executable.`
+    );
+  }
+  if (result.code !== 0) {
+    const output = `${result.stderr}
+${result.stdout}`;
+    const detail = extractFailure(output) ?? `relinker exited with code ${result.code}`;
+    throw new RelinkError(detail, output);
+  }
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    skippedSelf: findSkippedSelf(result.stdout)
+  };
 }
 async function dirSize(target) {
   let stat;
@@ -531,15 +1160,26 @@ async function copyDir(src, dest, onBytes, depth = 0) {
       await copyDir(from, to, onBytes, depth + 1);
       continue;
     }
-    try {
-      const followed = await fs.promises.stat(from);
-      if (followed.isDirectory()) {
-        await copyDir(from, to, onBytes, depth + 1);
-      } else {
-        await fs.promises.copyFile(from, to);
-        onBytes(followed.size);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const followed = await fs.promises.stat(from);
+        if (followed.isDirectory()) {
+          await copyDir(from, to, onBytes, depth + 1);
+        } else {
+          await fs.promises.copyFile(from, to);
+          onBytes(followed.size);
+        }
+        break;
+      } catch (error) {
+        const code = error.code;
+        if (code === "ENOENT" || code === "ELOOP" || code === "ENOTDIR") break;
+        if (attempt < 2 && (code === "EPERM" || code === "EBUSY" || code === "EACCES")) {
+          await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+          continue;
+        }
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`Could not copy "${from}" — ${detail}`);
       }
-    } catch {
     }
   }
 }
@@ -574,12 +1214,27 @@ async function buildLayout(installDir, keepAtRoot = []) {
       }
     }
   }
+  const libsSource = runtimeLibsDir();
+  try {
+    if (!(await fs.promises.stat(libsSource)).isDirectory()) throw new Error("not a directory");
+  } catch {
+    throw new Error(
+      "The shared runtime libraries are missing — repair or reinstall the conversion runtime, then retry."
+    );
+  }
   const libsLink = path.join(installDir, "libs");
   try {
     await fs.promises.rm(libsLink, { recursive: true, force: true });
   } catch {
   }
-  await fs.promises.symlink(runtimeLibsDir(), libsLink, "junction");
+  try {
+    await fs.promises.symlink(libsSource, libsLink, "junction");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Could not link the runtime libraries into the install — ${detail}. Make sure the games folder is on a local, writable drive and retry.`
+    );
+  }
 }
 async function mergeDirs(src, dest) {
   await fs.promises.mkdir(dest, { recursive: true });
@@ -596,149 +1251,124 @@ async function mergeDirs(src, dest) {
   }
   await fs.promises.rmdir(src);
 }
-const ELF_MAGIC = Buffer.from([127, 69, 76, 70]);
-const SELF_MAGICS = [
-  Buffer.from([79, 21, 61, 29]),
-  Buffer.from([84, 20, 245, 238])
-];
 function isBackupName(name) {
   return /\.(bak|backup|old|orig)([._-].*)?$/i.test(name) || name.endsWith("~");
 }
-async function fileMagic(file) {
-  let handle = null;
-  try {
-    handle = await fs.promises.open(file, "r");
-    const buf = Buffer.alloc(4);
-    const { bytesRead } = await handle.read(buf, 0, 4, 0);
-    if (bytesRead < 4) return "other";
-    if (buf.equals(ELF_MAGIC)) return "elf";
-    if (SELF_MAGICS.some((magic) => buf.equals(magic))) return "self";
-    return "other";
-  } catch {
-    return "other";
-  } finally {
-    if (handle) await handle.close().catch(() => {
-    });
-  }
-}
 function moduleDirRank(rel) {
-  if (rel === "sce_module") return 0;
-  if (rel === "sce_modules") return 1;
-  if (rel === "prx") return 2;
+  const key = rel.replace(/\\/g, "/").toLowerCase();
+  if (key === "sce_module") return 0;
+  if (key === "sce_modules") return 1;
+  if (key === "prx") return 2;
   return 3;
 }
 function normalizeLibName(name) {
   const base = name.split(/[\\/]/).pop() ?? name;
   return base.toLowerCase().replace(/\.(prx|sprx|so|elf)$/, "");
 }
-function readNeeded(elfPath) {
-  let fd = null;
-  try {
-    fd = fs.openSync(elfPath, "r");
-    const head = Buffer.alloc(64);
-    if (fs.readSync(fd, head, 0, 64, 0) < 52) return null;
-    if (!head.subarray(0, 4).equals(ELF_MAGIC)) return null;
-    const is64 = head[4] === 2;
-    const phoff = Number(is64 ? head.readBigUInt64LE(32) : head.readUInt32LE(28));
-    const phentsize = head.readUInt16LE(is64 ? 54 : 42);
-    const phnum = head.readUInt16LE(is64 ? 56 : 44);
-    if (phnum === 0 || phnum > 256) return null;
-    const loads = [];
-    let dynOff = -1;
-    let dynSize = 0;
-    const phdr = Buffer.alloc(phentsize);
-    for (let i = 0; i < phnum; i++) {
-      fs.readSync(fd, phdr, 0, phentsize, phoff + i * phentsize);
-      const type = phdr.readUInt32LE(0);
-      if (is64) {
-        const off = Number(phdr.readBigUInt64LE(8));
-        const vaddr = Number(phdr.readBigUInt64LE(16));
-        const filesz = Number(phdr.readBigUInt64LE(32));
-        if (type === 1) loads.push({ vaddr, off, filesz });
-        else if (type === 2) {
-          dynOff = off;
-          dynSize = filesz;
-        }
-      } else {
-        const off = phdr.readUInt32LE(4);
-        const vaddr = phdr.readUInt32LE(8);
-        const filesz = phdr.readUInt32LE(16);
-        if (type === 1) loads.push({ vaddr, off, filesz });
-        else if (type === 2) {
-          dynOff = off;
-          dynSize = filesz;
-        }
-      }
-    }
-    if (dynOff < 0 || dynSize <= 0) return null;
-    const vaddrToOff = (vaddr) => {
-      for (const load2 of loads) {
-        if (vaddr >= load2.vaddr && vaddr < load2.vaddr + load2.filesz) {
-          return load2.off + (vaddr - load2.vaddr);
-        }
-      }
-      return -1;
-    };
-    const entrySize = is64 ? 16 : 8;
-    const dyn = Buffer.alloc(Math.min(dynSize, entrySize * 1024));
-    fs.readSync(fd, dyn, 0, dyn.length, dynOff);
-    const tags = [];
-    for (let o = 0; o + entrySize <= dyn.length; o += entrySize) {
-      const tag = is64 ? Number(dyn.readBigInt64LE(o)) : dyn.readInt32LE(o);
-      if (tag === 0) break;
-      const val = is64 ? Number(dyn.readBigUInt64LE(o + 8)) : dyn.readUInt32LE(o + 4);
-      tags.push({ tag, val });
-    }
-    const strtabVal = tags.find((t) => t.tag === 5)?.val;
-    const neededVals = tags.filter((t) => t.tag === 1);
-    if (strtabVal === void 0) return neededVals.length > 0 ? null : [];
-    const strOff = vaddrToOff(strtabVal);
-    if (strOff < 0) return null;
-    const strsz = tags.find((t) => t.tag === 10)?.val ?? 65536;
-    const strtab = Buffer.alloc(Math.min(strsz, 4 << 20));
-    fs.readSync(fd, strtab, 0, strtab.length, strOff);
-    const names = [];
-    for (const { val } of neededVals) {
-      if (val < 0 || val >= strtab.length) continue;
-      const end = strtab.indexOf(0, val);
-      const name = strtab.subarray(val, end === -1 ? void 0 : end).toString("latin1");
-      if (name) names.push(name);
-    }
-    return names;
-  } catch {
-    return null;
-  } finally {
-    if (fd !== null) {
-      try {
-        fs.closeSync(fd);
-      } catch {
-      }
-    }
-  }
+const MODULE_EXTENSIONS = /\.(prx|sprx|so|elf)$/i;
+const MODULE_DIR_NAMES = /^(sce_modules?|prx|modules?|plugins?)$/i;
+const MAX_SCAN_DEPTH = 6;
+function isShimModuleDir(rel) {
+  return rel.split(/[\\/]+/).some((part) => /^fake[-_ ]?libs?$/i.test(part));
 }
-async function walkModuleDirs(root) {
-  const dirs = [];
+function sortCandidates(items) {
+  return items.sort(
+    (a, b) => moduleDirRank(a.rel) - moduleDirRank(b.rel) || a.rel.localeCompare(b.rel) || a.name.localeCompare(b.name)
+  );
+}
+async function discoverModuleFiles(root) {
+  const dirs = /* @__PURE__ */ new Set();
+  const files = [];
+  const shims = [];
+  const backups = [];
+  const leftovers = [];
   const visit = async (full, rel, depth) => {
-    if (depth > 4) return;
+    if (depth > MAX_SCAN_DEPTH) return;
+    const shimDir = rel !== "" && isShimModuleDir(rel);
     let entries;
     try {
       entries = await fs.promises.readdir(full, { withFileTypes: true });
     } catch {
       return;
     }
-    let hasPrx = false;
+    const suspiciousDir = rel !== "" && MODULE_DIR_NAMES.test(path.basename(full));
+    const dirFiles = [];
+    const dirBackups = [];
+    const possibleBackups = [];
+    const otherFiles = [];
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        if (entry.name === "sce_sys") continue;
+        if (entry.name === "sce_sys" || entry.name === "__MACOSX" || entry.name === "app0") continue;
         await visit(path.join(full, entry.name), rel ? `${rel}/${entry.name}` : entry.name, depth + 1);
-      } else if (entry.name.endsWith(".prx") && !entry.name.endsWith(".guest.prx")) {
-        hasPrx = true;
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const name = entry.name;
+      const filePath = path.join(full, name);
+      const lowerName = name.toLowerCase();
+      if (lowerName.endsWith(".guest.prx") || /\.novaps5-unwrap-.*\.tmp$/i.test(name)) {
+        leftovers.push(rel ? `${rel}/${name}` : name);
+        continue;
+      }
+      if (lowerName.endsWith(".esbak")) {
+        leftovers.push(rel ? `${rel}/${name}` : name);
+        possibleBackups.push({ name, path: filePath });
+        continue;
+      }
+      if (shimDir) {
+        if (!isBackupName(name)) shims.push({ rel, name });
+        continue;
+      }
+      if (isBackupName(name)) {
+        possibleBackups.push({ name, path: filePath });
+        continue;
+      }
+      if (!rel) continue;
+      if (!suspiciousDir && !MODULE_EXTENSIONS.test(name)) {
+        otherFiles.push({ name, path: filePath });
+        continue;
+      }
+      const kind = detectContainer(filePath);
+      if (kind === "elf" || kind === "self") {
+        dirFiles.push({ rel, name, path: filePath, magic: kind });
       }
     }
-    if (hasPrx && rel) dirs.push(rel);
+    if (dirFiles.length > 0 && !suspiciousDir) {
+      for (const file of otherFiles) {
+        const kind = detectContainer(file.path);
+        if (kind === "elf" || kind === "self") {
+          dirFiles.push({ rel, name: file.name, path: file.path, magic: kind });
+        }
+      }
+    }
+    if (dirFiles.length > 0 || suspiciousDir) {
+      for (const backup of possibleBackups) {
+        const kind = detectContainer(backup.path);
+        if (kind === "elf" || kind === "self") {
+          dirBackups.push(rel ? `${rel}/${backup.name}` : backup.name);
+          leftovers.push(rel ? `${rel}/${backup.name}` : backup.name);
+        }
+      }
+    }
+    if (dirFiles.length > 0) {
+      if (rel) dirs.add(rel);
+      files.push(...dirFiles);
+      backups.push(...dirBackups);
+    } else if (suspiciousDir && dirBackups.length > 0) {
+      backups.push(...dirBackups);
+    }
   };
   await visit(root, "", 0);
-  return dirs;
+  return {
+    dirs: [...dirs].sort((a, b) => moduleDirRank(a) - moduleDirRank(b) || a.localeCompare(b)),
+    files: sortCandidates(files),
+    shims: shims.sort((a, b) => a.rel.localeCompare(b.rel) || a.name.localeCompare(b.name)),
+    backups,
+    leftovers: [...new Set(leftovers)]
+  };
+}
+function errorDetail(error) {
+  return (error instanceof Error ? error.message : String(error)).replace(/^Unwrap failed — /, "");
 }
 async function checkCompatibility(root) {
   const checks = [];
@@ -765,18 +1395,140 @@ async function checkCompatibility(root) {
       status: "fail",
       detail: "eboot.bin not found — this folder is not a complete dump."
     });
-  } else {
-    const bytes = readMagicHex(eboot);
+  } else if (kind === "pe") {
     checks.push({
       id: "eboot",
       label: "Executable",
       status: "fail",
-      detail: bytes === "empty" || bytes === "unreadable" ? `eboot.bin is ${bytes} — the dump is incomplete; re-copy or re-extract it.` : `eboot.bin is not a recognized ELF or SELF file (first bytes: ${bytes}) — the file is truncated, corrupted, or not an eboot.`
+      detail: "eboot.bin is a Windows executable, not a PS5 dump — this folder looks already converted. Import the original dump folder instead."
+    });
+  } else {
+    const bytes = readMagicHex(eboot);
+    if (bytes === "empty" || bytes === "unreadable") {
+      checks.push({
+        id: "eboot",
+        label: "Executable",
+        status: "fail",
+        detail: `eboot.bin is ${bytes} — the dump is incomplete; re-copy or re-extract it.`
+      });
+    } else {
+      checks.push({
+        id: "eboot",
+        label: "Executable",
+        status: "warn",
+        detail: `eboot.bin is not a recognized ELF or SELF file (first bytes: ${bytes}) — it cannot be converted. Installation will complete with the game marked Not working.`
+      });
+    }
+  }
+  const discovery = kind === "missing" ? { dirs: [], files: [], shims: [], backups: [], leftovers: [] } : await discoverModuleFiles(root);
+  const moduleNotes = [];
+  const moduleFileNames = /* @__PURE__ */ new Set();
+  for (const file of discovery.files) moduleFileNames.add(file.name.toLowerCase());
+  const hasSingular = fs.existsSync(path.join(root, "sce_module"));
+  const hasPlural = fs.existsSync(path.join(root, "sce_modules"));
+  const hasPrxDir = fs.existsSync(path.join(root, "prx"));
+  const hasRootModuleDir = hasSingular || hasPlural || hasPrxDir;
+  if (hasSingular && hasPlural) {
+    moduleNotes.push({
+      id: "modules-both",
+      label: "Modules",
+      status: "warn",
+      detail: "Both sce_module/ and sce_modules/ exist — sce_modules/ will be merged into sce_module/ automatically."
     });
   }
-  let needed = null;
-  if (kind === "self") {
+  if (!hasRootModuleDir && discovery.dirs.length === 0 && discovery.backups.length === 0) {
+    moduleNotes.push({
+      id: "modules-none",
+      label: "Modules",
+      status: "warn",
+      detail: "No module folder found — conversion will continue without bundled modules. Games that need their own libraries may fail to launch."
+    });
+  } else if (discovery.files.length === 0) {
+    moduleNotes.push({
+      id: "modules-empty",
+      label: "Modules",
+      status: "warn",
+      detail: "Module folders contain no loadable modules — conversion will continue without them. Some games may fail to launch."
+    });
+  }
+  if (discovery.shims.length > 0) {
+    const folders = [...new Set(discovery.shims.map((file) => file.rel))].join(", ");
+    moduleNotes.push({
+      id: "modules-shims",
+      label: "Modules",
+      status: "pass",
+      detail: `${discovery.shims.length} stand-in system librar${discovery.shims.length === 1 ? "y" : "ies"} in ${folders} will be left alone — the runtime provides its own implementations, and converting these stubs stops the game from starting.`
+    });
+  }
+  const previousOutputs = discovery.leftovers.filter((rel) => /\.guest\.prx$/i.test(rel));
+  if (previousOutputs.length > 0) {
+    const shown = previousOutputs.slice(0, 3).join(", ");
+    const more = previousOutputs.length > 3 ? ` (+${previousOutputs.length - 3} more)` : "";
+    moduleNotes.push({
+      id: "modules-outputs",
+      label: "Modules",
+      status: "warn",
+      detail: `Previous conversion output${previousOutputs.length === 1 ? "" : "s"} will be removed before converting: ${shown}${more}.`
+    });
+  }
+  const byName = /* @__PURE__ */ new Map();
+  for (const file of discovery.files) {
+    const folded = file.name.toLowerCase();
+    const bucket = byName.get(folded);
+    if (bucket) bucket.push(file);
+    else byName.set(folded, [file]);
+  }
+  for (const [, bucket] of byName) {
+    if (bucket.length < 2) continue;
+    bucket.sort(
+      (a, b) => moduleDirRank(a.rel) - moduleDirRank(b.rel) || a.rel.localeCompare(b.rel) || a.name.length - b.name.length || a.name.localeCompare(b.name)
+    );
+    const locations = [...new Set(bucket.map((f) => `${f.rel}/${f.name}`))].join(" and ");
+    moduleNotes.push({
+      id: `modules-dup-${bucket[0].name.toLowerCase()}`,
+      label: "Modules",
+      status: "warn",
+      detail: `Duplicate module "${bucket[0].name}" at ${locations} — the converter keeps the copy in ${bucket[0].rel}/ and skips the others.`
+    });
+  }
+  if (discovery.backups.length > 0) {
+    const shown = discovery.backups.slice(0, 3).join(", ");
+    const more = discovery.backups.length > 3 ? ` (+${discovery.backups.length - 3} more)` : "";
+    moduleNotes.push({
+      id: "modules-backups",
+      label: "Modules",
+      status: "warn",
+      detail: `Backup leftovers will be skipped during conversion: ${shown}${more}.`
+    });
+  }
+  const strays = discovery.files.filter((file) => !/\.prx$/i.test(file.name));
+  if (strays.length > 0) {
+    const shown = strays.slice(0, 3).map((f) => `${f.rel}/${f.name}`).join(", ");
+    const more = strays.length > 3 ? ` (+${strays.length - 3} more)` : "";
+    moduleNotes.push({
+      id: "modules-strays",
+      label: "Modules",
+      status: "warn",
+      detail: `Module-like files without a .prx name will still be converted: ${shown}${more}.`
+    });
+  }
+  const badModuleNames = discovery.files.filter((file) => /[^\x20-\x7e]|[:$]/.test(file.name));
+  if (badModuleNames.length > 0) {
+    const shown = badModuleNames.slice(0, 3).map((f) => `${f.rel}/${f.name}`).join(", ");
+    const more = badModuleNames.length > 3 ? ` (+${badModuleNames.length - 3} more)` : "";
+    moduleNotes.push({
+      id: "modules-filename",
+      label: "Modules",
+      status: "warn",
+      detail: `The converter cannot use these module filenames on Windows: ${shown}${more}. They will be skipped so the rest of the game can still install; the game may fail to launch. Rename them inside the dump for the best result.`
+    });
+  }
+  const selfModules = discovery.files.filter((file) => file.magic === "self");
+  const needsPython = kind === "self" || selfModules.length > 0;
+  let pythonReady = false;
+  if (needsPython) {
     const python = await pythonInvocation();
+    pythonReady = !!python;
     checks.push(
       python ? {
         id: "python",
@@ -790,39 +1542,133 @@ async function checkCompatibility(root) {
         detail: "The bundled Python is missing — repair or reinstall NovaPS5."
       }
     );
-    if (python) {
-      const trialDir = path.join(os.tmpdir(), `novaps5-compat-${process.pid}-${Date.now()}`);
-      try {
-        await fs.promises.mkdir(trialDir, { recursive: true });
-        const outElf = path.join(trialDir, "eboot.elf");
-        await unwrapSelf(eboot, outElf);
-        needed = readNeeded(outElf);
-        checks.push({
-          id: "unwrap",
-          label: "Eboot unwrap",
-          status: "pass",
-          detail: "Trial unwrap succeeded — the executable converts cleanly."
-        });
-      } catch (error) {
-        const detail = (error instanceof Error ? error.message : String(error)).replace(
-          /^Unwrap failed — /,
-          ""
-        );
-        checks.push({
-          id: "unwrap",
-          label: "Eboot unwrap",
-          status: "fail",
-          detail: `The eboot cannot be converted: ${detail}`
-        });
-      } finally {
-        await fs.promises.rm(trialDir, { recursive: true, force: true }).catch(() => {
-        });
-      }
-    }
-  } else if (kind === "elf") {
-    needed = readNeeded(eboot);
   }
+  const needed = /* @__PURE__ */ new Set();
+  const moduleSonames = [];
+  const moduleUnwrapFailures = [];
+  const collectElf = (elfPath) => {
+    const info = readElfDynamicInfo(elfPath);
+    if (!info) return;
+    for (const name of info.needed) needed.add(name);
+  };
+  if ((!needsPython || pythonReady) && (kind === "self" || kind === "elf" || discovery.files.length > 0)) {
+    const trialDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), `novaps5-compat-${process.pid}-`));
+    try {
+      if (kind === "self") {
+        try {
+          const outElf = path.join(trialDir, "eboot.elf");
+          await unwrapSelf(eboot, outElf);
+          collectElf(outElf);
+          checks.push({
+            id: "unwrap",
+            label: "Eboot unwrap",
+            status: "pass",
+            detail: "Trial unwrap succeeded — the executable converts cleanly."
+          });
+        } catch (error) {
+          checks.push({
+            id: "unwrap",
+            label: "Eboot unwrap",
+            status: "warn",
+            detail: `The eboot cannot be converted: ${errorDetail(error)}. Installation will complete with the game marked Not working.`
+          });
+        }
+      } else if (kind === "elf") {
+        collectElf(eboot);
+      }
+      for (let i = 0; i < discovery.files.length; i++) {
+        const file = discovery.files[i];
+        try {
+          const elfPath = file.magic === "self" ? path.join(trialDir, `module-${i}.elf`) : file.path;
+          if (file.magic === "self") await unwrapSelf(file.path, elfPath);
+          const info = readElfDynamicInfo(elfPath);
+          if (!info) {
+            if (file.magic === "self") {
+              moduleUnwrapFailures.push(`${file.rel}/${file.name}: unreadable ELF`);
+            }
+            continue;
+          }
+          for (const name of info.needed) needed.add(name);
+          if (info.soname) {
+            moduleSonames.push({ soname: info.soname, file });
+          }
+        } catch (error) {
+          moduleUnwrapFailures.push(`${file.rel}/${file.name}: ${errorDetail(error)}`);
+        }
+      }
+    } finally {
+      await fs.promises.rm(trialDir, { recursive: true, force: true }).catch(() => {
+      });
+    }
+  }
+  if (moduleUnwrapFailures.length > 0) {
+    const shown = moduleUnwrapFailures.slice(0, 3).join("; ");
+    const more = moduleUnwrapFailures.length > 3 ? ` (+${moduleUnwrapFailures.length - 3} more)` : "";
+    moduleNotes.push({
+      id: "modules-unwrap",
+      label: "Modules",
+      status: "warn",
+      detail: `Some modules cannot be converted and will be skipped: ${shown}${more}. Installation will continue so the rest of the game can install, but the game may fail to launch. Re-copy or re-extract the dump for the best chance.`
+    });
+  }
+  const bySoname = /* @__PURE__ */ new Map();
+  for (const entry of moduleSonames) {
+    const key = entry.soname.toLowerCase();
+    const bucket = bySoname.get(key);
+    if (bucket) bucket.push(entry);
+    else bySoname.set(key, [entry]);
+  }
+  for (const [, bucket] of bySoname) {
+    if (bucket.length < 2) continue;
+    bucket.sort(
+      (a, b) => moduleDirRank(a.file.rel) - moduleDirRank(b.file.rel) || a.file.rel.localeCompare(b.file.rel) || a.file.name.length - b.file.name.length || a.file.name.localeCompare(b.file.name)
+    );
+    const locations = bucket.map((e) => `${e.file.rel}/${e.file.name}`).join(" and ");
+    moduleNotes.push({
+      id: `modules-soname-${bucket[0].soname.toLowerCase()}`,
+      label: "Modules",
+      status: "warn",
+      detail: `Modules ${locations} share the identity "${bucket[0].soname}" — the converter keeps the copy in ${bucket[0].file.rel}/ and skips the others.`
+    });
+  }
+  if (discovery.files.length > 0 && !moduleNotes.some((check) => check.status === "fail")) {
+    const noteCount = moduleNotes.filter((check) => check.status !== "pass").length;
+    const count = discovery.files.length;
+    moduleNotes.push({
+      id: "modules",
+      label: "Modules",
+      status: noteCount > 0 ? "warn" : "pass",
+      detail: `${count} loadable module${count === 1 ? "" : "s"} found${noteCount > 0 ? " — the notes above are reconciled during conversion" : " — folders are consistent"}.`
+    });
+  }
+  checks.push(...moduleNotes);
   const tools = toolingPresent();
+  if (needed.size > 0 && tools.libs) {
+    const provided = /* @__PURE__ */ new Set();
+    try {
+      for (const entry of fs.readdirSync(runtimeLibsDir(), { withFileTypes: true })) {
+        if (entry.isFile()) provided.add(normalizeLibName(entry.name));
+      }
+    } catch {
+    }
+    for (const name of moduleFileNames) provided.add(normalizeLibName(name));
+    for (const entry of moduleSonames) provided.add(normalizeLibName(entry.soname));
+    const required = [...needed];
+    const missing = required.filter((name) => !provided.has(normalizeLibName(name)));
+    checks.push(
+      missing.length > 0 ? {
+        id: "deps",
+        label: "Libraries",
+        status: "warn",
+        detail: `Requires libraries the conversion runtime does not provide: ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ` (+${missing.length - 4} more)` : ""} — the game may fail to launch.`
+      } : {
+        id: "deps",
+        label: "Libraries",
+        status: "pass",
+        detail: `All ${required.length} required librar${required.length === 1 ? "y is" : "ies are"} provided by the runtime or the dump.`
+      }
+    );
+  }
   checks.push(
     tools.relinker && tools.libs && tools.unwrap ? {
       id: "runtime",
@@ -836,136 +1682,6 @@ async function checkCompatibility(root) {
       detail: "Conversion runtime is incomplete — restart NovaPS5 to download it."
     }
   );
-  const hasSingular = fs.existsSync(path.join(root, "sce_module"));
-  const hasPlural = fs.existsSync(path.join(root, "sce_modules"));
-  const hasPrxDir = fs.existsSync(path.join(root, "prx"));
-  const moduleIssues = [];
-  let moduleCount = 0;
-  const moduleFileNames = /* @__PURE__ */ new Set();
-  if (!hasSingular && !hasPlural && !hasPrxDir) {
-    moduleIssues.push({
-      id: "modules-none",
-      label: "Modules",
-      status: "fail",
-      detail: "No sce_module/ folder — this dump ships no loadable modules for the converter."
-    });
-  } else {
-    if (hasSingular && hasPlural) {
-      moduleIssues.push({
-        id: "modules-both",
-        label: "Modules",
-        status: "warn",
-        detail: "Both sce_module/ and sce_modules/ exist — sce_modules/ will be merged into sce_module/ automatically."
-      });
-    }
-    const rootDirs = [
-      hasSingular ? "sce_module" : null,
-      hasPlural ? "sce_modules" : null,
-      hasPrxDir ? "prx" : null
-    ].filter((dir) => dir !== null);
-    const extraDirs = (await walkModuleDirs(root)).filter((dir) => !rootDirs.includes(dir));
-    const dirs = [...rootDirs, ...extraDirs];
-    const files = [];
-    for (const rel of dirs) {
-      let entries;
-      try {
-        entries = await fs.promises.readdir(path.join(root, rel), { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        if (!entry.isFile()) continue;
-        if (entry.name.endsWith(".guest.prx")) continue;
-        const magic = await fileMagic(path.join(root, rel, entry.name));
-        if (magic === "other") continue;
-        files.push({ rel, name: entry.name, magic });
-        moduleFileNames.add(entry.name.toLowerCase());
-      }
-    }
-    const byName = /* @__PURE__ */ new Map();
-    for (const file of files) {
-      const folded = file.name.toLowerCase();
-      const bucket = byName.get(folded);
-      if (bucket) bucket.push(file);
-      else byName.set(folded, [file]);
-    }
-    for (const [, bucket] of byName) {
-      if (bucket.length < 2) continue;
-      bucket.sort(
-        (a, b) => moduleDirRank(a.rel) - moduleDirRank(b.rel) || a.rel.localeCompare(b.rel)
-      );
-      const locations = [...new Set(bucket.map((f) => `${f.rel}/${f.name}`))].join(" and ");
-      moduleIssues.push({
-        id: `modules-dup-${bucket[0].name.toLowerCase()}`,
-        label: "Modules",
-        status: "warn",
-        detail: `Duplicate module "${bucket[0].name}" at ${locations} — the converter keeps the copy in ${bucket[0].rel}/ and skips the others.`
-      });
-    }
-    const backups = files.filter((file) => isBackupName(file.name) || file.name.endsWith(".esbak"));
-    if (backups.length > 0) {
-      const shown = backups.slice(0, 3).map((f) => `${f.rel}/${f.name}`).join(", ");
-      const more = backups.length > 3 ? ` (+${backups.length - 3} more)` : "";
-      moduleIssues.push({
-        id: "modules-backups",
-        label: "Modules",
-        status: "warn",
-        detail: `Backup leftovers will be skipped during conversion: ${shown}${more}.`
-      });
-    }
-    const strays = files.filter(
-      (file) => !file.name.endsWith(".prx") && !isBackupName(file.name) && !file.name.endsWith(".esbak")
-    );
-    if (strays.length > 0) {
-      const shown = strays.slice(0, 3).map((f) => `${f.rel}/${f.name}`).join(", ");
-      const more = strays.length > 3 ? ` (+${strays.length - 3} more)` : "";
-      moduleIssues.push({
-        id: "modules-strays",
-        label: "Modules",
-        status: "warn",
-        detail: `Module-like files without a .prx name will still be converted: ${shown}${more}.`
-      });
-    }
-    moduleCount = files.length - backups.length;
-  }
-  if (moduleIssues.some((check) => check.status === "fail")) {
-    checks.push(...moduleIssues.filter((check) => check.status === "fail"));
-  } else {
-    const clean = moduleIssues.length === 0;
-    checks.push(
-      ...moduleIssues,
-      {
-        id: "modules",
-        label: "Modules",
-        status: "pass",
-        detail: clean ? `${moduleCount} loadable module${moduleCount === 1 ? "" : "s"} found — folders are consistent.` : `${moduleCount} loadable module${moduleCount === 1 ? "" : "s"} found — the notes above are reconciled during conversion.`
-      }
-    );
-  }
-  if (needed && needed.length > 0 && tools.libs) {
-    const provided = /* @__PURE__ */ new Set();
-    try {
-      for (const entry of fs.readdirSync(runtimeLibsDir(), { withFileTypes: true })) {
-        if (entry.isFile()) provided.add(normalizeLibName(entry.name));
-      }
-    } catch {
-    }
-    for (const name of moduleFileNames) provided.add(normalizeLibName(name));
-    const missing = needed.filter((name) => !provided.has(normalizeLibName(name)));
-    checks.push(
-      missing.length > 0 ? {
-        id: "deps",
-        label: "Libraries",
-        status: "warn",
-        detail: `Requires libraries the conversion runtime does not provide: ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ` (+${missing.length - 4} more)` : ""} — the game may fail to launch.`
-      } : {
-        id: "deps",
-        label: "Libraries",
-        status: "pass",
-        detail: `All ${needed.length} required librar${needed.length === 1 ? "y is" : "ies are"} provided by the runtime or the dump.`
-      }
-    );
-  }
   const meta = await readMeta(root);
   checks.push(
     meta.titleId ? {
@@ -987,25 +1703,36 @@ function formatBlockers(report) {
   if (blockers.length === 0) return null;
   return blockers.map((check) => `${check.label}: ${check.detail}`).join(" ");
 }
-function looksLikeDump(dir) {
-  return fs.existsSync(path.join(dir, "eboot.bin")) || fs.existsSync(path.join(dir, "sce_sys"));
-}
-async function locateDumpRoot(dir, depth = 0) {
-  if (depth > 4) return null;
-  if (looksLikeDump(dir)) return dir;
+const PENALIZED_ROOT = /(^|[\\/])(update|updates|patch|patches|dlc|bonus|preorder)([\\/]|$)/i;
+async function findDumpRoot(dir, depth, maxDepth) {
+  if (depth > maxDepth) return null;
+  const hasEboot = fs.existsSync(path.join(dir, "eboot.bin"));
+  const hasSceSys = fs.existsSync(path.join(dir, "sce_sys"));
+  const penalty = PENALIZED_ROOT.test(dir) ? 100 : 0;
+  if (hasEboot) return { path: dir, score: 1e3 - depth - penalty, hasEboot };
   let entries;
   try {
     entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
-    return null;
+    return hasSceSys ? { path: dir, score: 100 - depth - penalty, hasEboot } : null;
   }
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const found = await locateDumpRoot(path.join(dir, entry.name), depth + 1);
-      if (found) return found;
-    }
+  const children = entries.filter(
+    (entry) => entry.isDirectory() && entry.name !== "sce_sys" && entry.name !== "__MACOSX" && !entry.name.startsWith(".")
+  ).sort(
+    (a, b) => Number(PENALIZED_ROOT.test(a.name)) - Number(PENALIZED_ROOT.test(b.name)) || a.name.localeCompare(b.name)
+  );
+  let best = hasSceSys ? { path: dir, score: 100 - depth - penalty, hasEboot } : null;
+  for (const entry of children) {
+    const found = await findDumpRoot(path.join(dir, entry.name), depth + 1, maxDepth);
+    if (!found) continue;
+    if (found.hasEboot && !PENALIZED_ROOT.test(found.path)) return found;
+    if (!best || found.score > best.score) best = found;
   }
-  return null;
+  return best;
+}
+async function locateDumpRoot(dir, depth = 0) {
+  const found = await findDumpRoot(dir, depth, 6);
+  return found?.path ?? null;
 }
 function parseParamSfo(buffer) {
   const out = {};
@@ -1029,6 +1756,9 @@ function parseParamSfo(buffer) {
   }
   return out;
 }
+function sourceFallbackName(sourcePath) {
+  return path.basename(sourcePath).replace(/\.(zip|rar|7z|tar|tgz|tar\.gz|tar\.xz)$/i, "");
+}
 async function readMeta(sourceDir) {
   let name = path.basename(sourceDir);
   let titleId = null;
@@ -1049,32 +1779,106 @@ async function readMeta(sourceDir) {
     try {
       const sfo = parseParamSfo(await fs.promises.readFile(path.join(sourceDir, "sce_sys", "param.sfo")));
       if (!titleId && sfo.TITLE_ID?.trim()) titleId = sfo.TITLE_ID.trim();
-      if (name === path.basename(sourceDir) && sfo.TITLE?.trim()) name = sfo.TITLE.trim();
+      if (name === path.basename(sourceDir)) {
+        const localized = Object.entries(sfo).find(
+          ([key, value]) => /^TITLE_[A-Z]{2}$/i.test(key) && value.trim()
+        )?.[1];
+        const title = sfo.TITLE?.trim() || localized?.trim();
+        if (title) name = title;
+      }
     } catch {
     }
   }
-  try {
-    await fs.promises.access(path.join(sourceDir, "sce_sys", "icon0.png"));
-    hasCover = true;
-  } catch {
+  for (const candidate of ["icon0.png", "pic0.png", "pic1.png"]) {
+    try {
+      await fs.promises.access(path.join(sourceDir, "sce_sys", candidate));
+      hasCover = true;
+      break;
+    } catch {
+    }
   }
   return { name, titleId, hasCover };
 }
 async function extractArchive(archive, dest) {
   await fs.promises.mkdir(dest, { recursive: true });
-  const { code, stderr } = await run("tar", ["-xf", archive, "-C", dest], {
-    timeoutMs: 30 * 60 * 1e3
-  });
-  if (code !== 0) {
-    throw new Error(`Could not extract the archive — ${stderr.trim() || `tar exited with code ${code}`}`);
+  let detail = "";
+  try {
+    const result = await run("tar", ["-xf", archive, "-C", dest], {
+      timeoutMs: 30 * 60 * 1e3
+    });
+    if (result.code === 0 && !result.timedOut) return;
+    detail = result.timedOut ? "extraction timed out after 30 minutes" : result.stderr.trim() || `tar exited with code ${result.code}`;
+  } catch (error) {
+    detail = error instanceof Error ? error.message : String(error);
   }
+  if (process.platform === "win32" && /\.zip$/i.test(archive)) {
+    const esc = (p) => p.replace(/'/g, "''");
+    try {
+      const result = await run(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          `Expand-Archive -LiteralPath '${esc(archive)}' -DestinationPath '${esc(dest)}' -Force`
+        ],
+        { timeoutMs: 30 * 60 * 1e3 }
+      );
+      if (result.code === 0 && !result.timedOut) return;
+      detail = result.stderr.trim() || detail;
+    } catch (error) {
+      detail = error instanceof Error ? error.message : detail;
+    }
+  }
+  if (/no space left|not enough space|disk full|ENOSPC/i.test(detail)) {
+    throw new Error(
+      `Not enough free space to extract "${path.basename(archive)}" — archives are unpacked to the system temp folder (${electron.app.getPath("temp")}) first. Free space on that drive, or extract the archive yourself and import the folder.`
+    );
+  }
+  if (/passphrase|password|encrypted/i.test(detail)) {
+    throw new Error(
+      `The archive is password-protected — extract "${path.basename(archive)}" first, then import the folder.`
+    );
+  }
+  if (/unrecognized archive format|not supported|unsupported/i.test(detail)) {
+    throw new Error(
+      `The archive format could not be read — extract "${path.basename(archive)}" with an archive tool, then import the extracted folder.`
+    );
+  }
+  throw new Error(
+    `Could not extract "${path.basename(archive)}" — ${detail || "the extractor produced no output"}`
+  );
 }
 async function resolveSource(sourcePath) {
-  if (/\.(zip|rar|7z)$/i.test(sourcePath)) {
-    const tempDir = path.join(electron.app.getPath("temp"), `ps5lib-${Date.now()}-${Math.floor(Math.random() * 1e6)}`);
-    await extractArchive(sourcePath, tempDir);
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`The selected source no longer exists: ${sourcePath}`);
+  }
+  if (/\.(zip|rar|7z|tar|tgz|tar\.gz|tar\.xz)$/i.test(sourcePath)) {
+    const tempDir = path.join(
+      electron.app.getPath("temp"),
+      `ps5lib-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+    );
+    try {
+      await extractArchive(sourcePath, tempDir);
+    } catch (error) {
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
+      });
+      throw error;
+    }
     const root2 = await locateDumpRoot(tempDir) ?? tempDir;
     return { root: root2, tempDir };
+  }
+  let sourceIsFile = false;
+  try {
+    sourceIsFile = (await fs.promises.stat(sourcePath)).isFile();
+  } catch {
+  }
+  if (sourceIsFile) {
+    throw new Error(
+      `"${path.basename(sourcePath)}" is not a supported archive — use .zip, .rar, .7z, .tar, .tar.gz, or .tar.xz.`
+    );
   }
   const root = await locateDumpRoot(sourcePath) ?? sourcePath;
   return { root, tempDir: null };
@@ -1089,6 +1893,7 @@ async function detectDump(sourcePath) {
       return { isDump: false, reason: "No eboot.bin found — this does not look like a PS5 game dump." };
     }
     const meta = await readMeta(root);
+    const displayName = resolved.tempDir && meta.name === path.basename(root) ? sourceFallbackName(sourcePath) : meta.name;
     let sizeBytes = 0;
     for (const entry of await fs.promises.readdir(root, { withFileTypes: true })) {
       if (entry.name.endsWith(".esbak")) continue;
@@ -1097,7 +1902,7 @@ async function detectDump(sourcePath) {
     const compat = await checkCompatibility(root);
     return {
       isDump: true,
-      name: meta.name,
+      name: displayName,
       titleId: meta.titleId,
       hasCover: meta.hasCover,
       sizeBytes,
@@ -1118,7 +1923,9 @@ function describeCode(code) {
     3221225477: "access violation",
     3221225480: "invalid handle",
     3221225501: "illegal instruction",
+    3221225595: "invalid image format",
     3221225620: "divide by zero",
+    3221225781: "required DLL not found",
     3221225786: "terminated (Ctrl+C or logoff)",
     3221225794: "DLL initialization failed",
     3221226505: "stack buffer overrun / fail-fast",
@@ -1127,12 +1934,87 @@ function describeCode(code) {
   const name = names[code >>> 0];
   return name ? `${hex} — ${name}` : hex;
 }
+function describeRuntimeFailure(text) {
+  const cpuLacks = text.match(/host CPU\s+[^:\n]*:\s*has[^;\n]*;\s*lacks\s+([^\r\n]+)/i);
+  if (cpuLacks) {
+    const missing = cpuLacks[1].trim();
+    if (missing && !/^(none|nothing)\b/i.test(missing)) {
+      return `this PC's CPU lacks ${missing} — the PS5 title needs those instructions`;
+    }
+  }
+  const cpuHost = text.match(/The host CPU \(([^)]+)\)/i);
+  if (cpuHost) {
+    return `this PC's CPU (${cpuHost[1]}) cannot run instructions the PS5 title uses`;
+  }
+  const missingModule = text.match(/FAIL:\s*dependency module not found:\s*([^\r\n]+)/i);
+  if (missingModule) {
+    const missing = missingModule[1].trim().replace(/^["']|["']$/g, "");
+    return `could not load dependency "${path.basename(missing)}" — it is missing from the install`;
+  }
+  const unresolved = text.match(/FAIL:\s*unresolved dependency import([\s\S]{0,500})/i);
+  if (unresolved) {
+    const block = unresolved[1];
+    const provider = block.match(/Provider:\s*([^\r\n]+)/i)?.[1]?.trim();
+    const symbol = block.match(/Symbol:\s*([^\r\n]+)/i)?.[1]?.trim();
+    if (symbol && provider) {
+      return `the game needs "${symbol}" from "${path.basename(provider)}", which the runtime does not provide yet`;
+    }
+    if (symbol) return `the game needs the imported function "${symbol}", which the runtime does not provide yet`;
+    return "the game imports a function the conversion runtime does not implement yet";
+  }
+  const unresolvedElf = [
+    ...text.matchAll(/FAIL:\s*unresolved ELF import\s+(\S+)(?:\s+from\s+(\S+))?/gi)
+  ];
+  if (unresolvedElf.length > 0) {
+    const symbols = new Set(unresolvedElf.map((match) => match[1]));
+    const providers = [
+      ...new Set(
+        unresolvedElf.map((match) => match[2]).filter((value) => Boolean(value)).map((value) => path.basename(value))
+      )
+    ].sort();
+    const imports = `${symbols.size} function${symbols.size === 1 ? "" : "s"}`;
+    const from = providers.length > 0 ? ` from ${providers.join(", ")}` : "";
+    return `the game asks for ${imports}${from} that the AnyPS5 runtime does not implement — the converted entry point aborts before the title runs`;
+  }
+  if (/GetLastError:\s*127\b/i.test(text)) {
+    return "Windows could not resolve a function the converted game imports (error 127) — the AnyPS5 runtime does not export it";
+  }
+  const notPe = text.match(/FAIL:\s*dependency module is not a Windows PE image:\s*([^\r\n]+)/i);
+  if (notPe) {
+    return `"${path.basename(notPe[1].trim())}" is not a valid Windows library — the install is corrupted`;
+  }
+  if (/FAIL:\s*invalid or unsupported PE dependency metadata/i.test(text)) {
+    return "the converted executable has unreadable dependency metadata — retry the installation";
+  }
+  if (/FAIL:\s*dependency diagnostics capacity exceeded/i.test(text)) {
+    return "the game has too many dependencies for the runtime to diagnose";
+  }
+  if (/FAIL:\s*dependency diagnostics Windows API failed/i.test(text)) {
+    return "Windows could not inspect the game’s dependencies during startup";
+  }
+  const trophy = detectTrophyAbort(text);
+  if (trophy) {
+    const packageName = path.basename(trophy.packagePath);
+    return `the game asked for trophy ${trophy.trophyId}, which ${packageName} does not define — the AnyPS5 runtime aborts instead of returning the invalid-trophy error (hide the trophy package to run with placeholder trophy data)`;
+  }
+  return null;
+}
+function detectTrophyAbort(text) {
+  const match = text.match(
+    /sceNpTrophy2GetTrophyInfo:\s*trophy\s+(\d+)\s+is not in\s+([^\r\n]+)/i
+  );
+  if (!match) return null;
+  return { trophyId: Number(match[1]), packagePath: match[2].trim() };
+}
 function summarizeExit(code, signal, logPath) {
   let text = "";
   try {
     text = fs.readFileSync(logPath, "utf8");
   } catch {
   }
+  const trophyAbort = detectTrophyAbort(text);
+  const diagnosis = describeRuntimeFailure(text);
+  if (diagnosis) return { detail: diagnosis, trophyAbort };
   const fatal = text.match(
     /^FATAL: unhandled exception (0x[0-9a-f]+)[^\n]*?on thread \d+ '([^']*)'/im
   );
@@ -1141,14 +2023,19 @@ function summarizeExit(code, signal, logPath) {
     const fault = describeCode(parseInt(fatal[1], 16));
     const where = rip ? ` at ${rip[1]}` : "";
     const thread = fatal[2] ? `, thread '${fatal[2]}'` : "";
-    return `crashed (${fault})${where}${thread}`;
+    return { detail: `crashed (${fault})${where}${thread}`, trophyAbort };
   }
-  if (signal) return `killed by ${signal}`;
-  if (code === null) return "exited without an exit code";
-  if (code === 0) return "exited immediately with code 0";
-  if (code < 0 || code >= 3221225472) return `crashed (${describeCode(code)})`;
+  if (signal) return { detail: `killed by ${signal}`, trophyAbort };
+  if (code === null) return { detail: "exited without an exit code", trophyAbort };
+  if (code === 0) return { detail: "exited immediately with code 0", trophyAbort };
+  if (code < 0 || code >= 3221225472) {
+    return { detail: `crashed (${describeCode(code)})`, trophyAbort };
+  }
   const tail = text.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-3).join(" · ");
-  return tail ? `exited with code ${code} — ${tail}` : `exited with code ${code}`;
+  return {
+    detail: tail ? `exited with code ${code} — ${tail}` : `exited with code ${code}`,
+    trophyAbort
+  };
 }
 async function probeLaunch(exePath, cwd, ms = 1e4) {
   try {
@@ -1216,7 +2103,8 @@ async function probeLaunch(exePath, cwd, ms = 1e4) {
     child.on("exit", (code, signal) => {
       if (timer) clearTimeout(timer);
       setTimeout(() => {
-        finish({ state: "failed", detail: summarizeExit(code, signal, logPath) });
+        const summary = summarizeExit(code, signal, logPath);
+        finish({ state: "failed", detail: summary.detail, trophyAbort: summary.trophyAbort });
       }, 150);
     });
     timer = setTimeout(() => {
@@ -1227,22 +2115,157 @@ async function probeLaunch(exePath, cwd, ms = 1e4) {
 function isBackup(name) {
   return name.endsWith(".esbak");
 }
+const RELINK_PROGRESS = {
+  Executable: [68, 1],
+  "Syscall scan": [70, 3],
+  "Instruction scan": [73, 3],
+  "Instruction conversion": [68, 2],
+  "Import analysis": [79, 1],
+  "PRX conversion": [80, 5],
+  "Output image": [85, 2],
+  "Write output": [87, 1]
+};
+async function freeSpace(dir) {
+  try {
+    const stats = await fs.promises.statfs(dir);
+    const available = Number(stats.bavail || stats.bfree || 0) * Number(stats.bsize || 0);
+    return Number.isFinite(available) && available > 0 ? available : null;
+  } catch {
+    return null;
+  }
+}
+function formatBytes(bytes) {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+function identifyOffendingModules(detail, output, modules, sonames) {
+  const inputLines = output.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^Input:/i.test(line));
+  const haystack = `${detail}
+${inputLines.join("\n")}`.toLowerCase();
+  const found = /* @__PURE__ */ new Set();
+  for (const file of modules) {
+    const name = file.name.toLowerCase();
+    if (name.length >= 4 && haystack.includes(name)) found.add(file.name);
+    const soname = sonames.get(file)?.toLowerCase();
+    if (soname && soname.length >= 4 && haystack.includes(soname)) found.add(file.name);
+  }
+  for (const match of haystack.matchAll(/([^\s"'\\/]+?)\.guest\.prx/g)) {
+    const base = match[1];
+    const hit = modules.find((file) => file.name.toLowerCase() === base);
+    if (hit) found.add(hit.name);
+  }
+  return [...found];
+}
 const activeStages = /* @__PURE__ */ new Set();
 async function installGame(sourcePath, nameOverride, report, jobId) {
   let step = "validating";
   let percent = 0;
   let tempDir = null;
   let stageDir = null;
+  let id = "";
+  let name = "";
+  let metaTitleId = null;
+  let persistentSource = "";
+  let finalDir = "";
+  let exeName = "";
+  let phase = "pre";
   const emit = (message, pct, s) => {
     step = s;
     percent = Math.round(pct);
     report({ jobId, step, message, percent, status: "running" });
+  };
+  const registerFailed = async (reason) => {
+    const stage = stageDir;
+    if (!stage || !finalDir || !id || !name) return null;
+    const prior = await getGame(id);
+    if (prior?.status === "ready" && fs.existsSync(prior.exePath)) return null;
+    emit("Conversion failed — keeping the install for retry…", 92, "finalizing");
+    let retire = `${finalDir}.old`;
+    await fs.promises.rm(retire, { recursive: true, force: true }).catch(() => {
+    });
+    if (fs.existsSync(retire)) retire = `${finalDir}.old-${Date.now()}`;
+    if (fs.existsSync(finalDir)) await fs.promises.rename(finalDir, retire);
+    try {
+      await fs.promises.rename(stage, finalDir);
+    } catch (swapError) {
+      if (fs.existsSync(retire)) await fs.promises.rename(retire, finalDir).catch(() => {
+      });
+      throw swapError;
+    }
+    await fs.promises.rm(retire, { recursive: true, force: true }).catch(() => {
+    });
+    activeStages.delete(path.basename(stage));
+    stageDir = null;
+    if (tempDir) {
+      await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
+      });
+      tempDir = null;
+    }
+    const sizeBytes = await dirSize(finalDir);
+    let cover = null;
+    for (const candidate of ["icon0.png", "pic0.png", "pic1.png"]) {
+      try {
+        await fs.promises.copyFile(
+          path.join(finalDir, "sce_sys", candidate),
+          path.join(finalDir, "cover.png")
+        );
+        cover = "cover.png";
+        break;
+      } catch {
+        try {
+          await fs.promises.copyFile(
+            path.join(finalDir, "app0", "sce_sys", candidate),
+            path.join(finalDir, "cover.png")
+          );
+          cover = "cover.png";
+          break;
+        } catch {
+        }
+      }
+    }
+    const detail = reason.trim().replace(/^Conversion failed\s*—\s*/i, "") || "the converter could not produce an executable";
+    const game = {
+      id,
+      name,
+      titleId: metaTitleId,
+      sourcePath: persistentSource,
+      installPath: finalDir,
+      exePath: path.join(finalDir, exeName),
+      sizeBytes,
+      cover,
+      status: "error",
+      error: `Conversion failed — ${detail}`,
+      installedAt: Date.now(),
+      launchState: "failed",
+      launchDetail: detail
+    };
+    await addGame(game);
+    report({
+      jobId,
+      step: "done",
+      message: "Installed — conversion failed, kept for retry",
+      percent: 100,
+      status: "done",
+      gameId: id,
+      gameName: name,
+      launchState: "failed",
+      launchDetail: detail,
+      conversionFailed: true
+    });
+    return game;
   };
   try {
     emit("Validating source…", 2, "validating");
     const resolved = await resolveSource(sourcePath);
     tempDir = resolved.tempDir;
     const dumpRoot = resolved.root;
+    persistentSource = resolved.tempDir ? sourcePath : dumpRoot;
     if (!fs.existsSync(path.join(dumpRoot, "eboot.bin"))) {
       throw new Error("No eboot.bin found — this does not look like a PS5 game dump.");
     }
@@ -1251,17 +2274,22 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     const blockers = formatBlockers(compat);
     if (blockers) throw new Error(`Not compatible — ${blockers}`);
     const meta = await readMeta(dumpRoot);
-    const name = (nameOverride?.trim() || meta.name).slice(0, 90);
+    metaTitleId = meta.titleId;
+    const fallbackName = resolved.tempDir && meta.name === path.basename(dumpRoot) ? sourceFallbackName(sourcePath) : meta.name;
+    name = (nameOverride?.trim() || fallbackName).slice(0, 90);
+    let safeName = name.replace(/[\\/:*?"<>|]/g, "").trim() || "game";
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(safeName)) safeName += "_";
+    exeName = `${safeName}.exe`;
     const baseId = slugify(name);
     const owned = await getGame(baseId);
-    const sameTitle = !!owned && !!meta.titleId && owned.titleId === meta.titleId;
-    let id = baseId;
+    const sameTitle = !!owned && (!!meta.titleId && owned.titleId === meta.titleId || owned.status === "error" && owned.name === name);
+    id = baseId;
     if (!sameTitle) {
       let n = 2;
       const taken = async (candidate) => !!await getGame(candidate) || fs.existsSync(path.join(gamesRoot(), candidate));
       while (await taken(id)) id = `${baseId}-${n++}`;
     }
-    const finalDir = path.join(gamesRoot(), id);
+    finalDir = path.join(gamesRoot(), id);
     const stageName = `.staging-${id}-${Date.now()}`;
     const installDir = path.join(gamesRoot(), stageName);
     stageDir = installDir;
@@ -1279,6 +2307,13 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     );
     let total = 0;
     for (const entry of entries) total += await dirSize(path.join(dumpRoot, entry.name));
+    const existingSize = fs.existsSync(finalDir) ? await dirSize(finalDir) : 0;
+    const free = await freeSpace(gamesRoot());
+    if (free !== null && total > 0 && free < total + existingSize + 256 * 1024 * 1024) {
+      throw new Error(
+        `Not enough free space — this game needs about ${formatBytes(total + existingSize)} but only ${formatBytes(free)} is available on the games drive. Free some space and retry.`
+      );
+    }
     let copied = 0;
     let lastCopyEmit = 0;
     emit("Copying game data…", 8, "copying");
@@ -1303,15 +2338,31 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
         if (followed.isDirectory()) {
           await copyDir(src, dest, tick);
         } else {
-          await fs.promises.copyFile(src, dest);
-          tick(followed.size);
+          for (let attempt = 0; ; attempt++) {
+            try {
+              await fs.promises.copyFile(src, dest);
+              tick(followed.size);
+              break;
+            } catch (error) {
+              const code = error.code;
+              if (code === "ENOENT" || code === "ELOOP" || code === "ENOTDIR") break;
+              if (attempt < 2 && (code === "EPERM" || code === "EBUSY" || code === "EACCES")) {
+                await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+                continue;
+              }
+              throw error;
+            }
+          }
         }
       } catch (error) {
+        const code = error.code;
+        if (code === "ENOENT" || code === "ELOOP" || code === "ENOTDIR") continue;
         throw new Error(
           `Could not copy "${entry.name}" from the dump — ${error instanceof Error ? error.message : String(error)}`
         );
       }
     }
+    phase = "converting";
     const ebootDest = path.join(installDir, "eboot.bin");
     const inputElf = path.join(installDir, "input.elf");
     if (detectContainer(ebootDest) === "unknown") {
@@ -1326,6 +2377,10 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       await unwrapSelf(ebootDest, inputElf);
     } else if (ebootKind === "elf") {
       await fs.promises.copyFile(ebootDest, inputElf);
+    } else if (ebootKind === "pe") {
+      throw new Error(
+        "eboot.bin is a Windows executable, not a PS5 dump — this folder looks already converted. Import the original dump folder instead."
+      );
     } else {
       throw new Error(
         "eboot.bin is neither a plain ELF nor a SELF container — the dump file is corrupted or incomplete."
@@ -1343,101 +2398,216 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       }
       await fs.promises.rm(pluralDir, { recursive: true, force: true });
     }
-    const prxDirs = [];
-    const moduleDirs = [];
-    const scanForModules = async (dir, rel, depth) => {
-      if (depth > 4) return;
-      let entries2;
-      try {
-        entries2 = await fs.promises.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
+    const modules = await discoverModuleFiles(installDir);
+    if (modules.shims.length > 0) {
+      const folders = [...new Set(modules.shims.map((file) => file.rel))].join(", ");
+      console.info(
+        `[install] leaving ${modules.shims.length} stand-in system librar${modules.shims.length === 1 ? "y" : "ies"} in ${folders} unconverted — the runtime provides its own implementations`
+      );
+    }
+    const skippedModules = [];
+    for (const rel of modules.leftovers) {
+      await fs.promises.rm(path.join(installDir, rel), { force: true }).catch(() => {
+      });
+    }
+    const preferred = (candidate, current) => {
+      if (!current) return true;
+      const rank = moduleDirRank(candidate.rel) - moduleDirRank(current.rel);
+      if (rank !== 0) return rank < 0;
+      if (candidate.rel !== current.rel) return candidate.rel < current.rel;
+      if (candidate.name.length !== current.name.length) {
+        return candidate.name.length < current.name.length;
       }
-      let hasPrx = false;
-      for (const entry of entries2) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name === "sce_sys") continue;
-          await scanForModules(full, rel ? path.join(rel, entry.name) : entry.name, depth + 1);
-        } else if (entry.name.endsWith(".esbak")) {
-          await fs.promises.rm(full, { force: true });
-        } else if (entry.name.endsWith(".prx")) {
-          hasPrx = true;
-        }
-      }
-      if (hasPrx && rel) {
-        prxDirs.push(rel);
-        if (rel !== "sce_module" && rel !== "sce_modules" && rel !== "prx") moduleDirs.push(rel);
-      }
+      return candidate.name.localeCompare(current.name) < 0;
     };
-    await scanForModules(installDir, "", 0);
-    for (const rel of prxDirs) {
-      const dir = path.join(installDir, rel);
-      for (const file of await fs.promises.readdir(dir)) {
-        if (isBackupName(file)) {
-          await fs.promises.rm(path.join(dir, file), { force: true });
-        }
+    const candidates = [];
+    for (const file of modules.files) {
+      if (!fs.existsSync(file.path)) continue;
+      if (/[^\x20-\x7e]|[:$]/.test(file.name)) {
+        console.warn(`[install] skipping module with unsupported filename: ${file.rel}/${file.name}`);
+        skippedModules.push(`${file.rel}/${file.name}`);
+        await fs.promises.rm(file.path, { force: true }).catch(() => {
+        });
+        continue;
+      }
+      candidates.push(file);
+    }
+    const byName = /* @__PURE__ */ new Map();
+    for (const file of candidates) {
+      const key = file.name.toLowerCase();
+      if (preferred(file, byName.get(key))) byName.set(key, file);
+    }
+    for (const file of candidates) {
+      if (byName.get(file.name.toLowerCase()) !== file) {
+        await fs.promises.rm(file.path, { force: true }).catch(() => {
+        });
       }
     }
-    const pickup = [];
-    for (const rel of prxDirs) {
-      const dir = path.join(installDir, rel);
-      for (const file of await fs.promises.readdir(dir).catch(() => [])) {
-        const kind = detectContainer(path.join(dir, file));
-        if (kind !== "elf" && kind !== "self") continue;
-        pickup.push({ rel, file, folded: file.toLowerCase() });
+    const keptByName = candidates.filter((file) => fs.existsSync(file.path));
+    for (const file of keptByName) {
+      if (file.magic !== "self") continue;
+      emit(`Unwrapping ${file.name}…`, 60, "preparing-modules");
+      try {
+        await unwrapSelf(file.path, file.path);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn(`[install] skipping module "${file.rel}/${file.name}" — ${detail}`);
+        skippedModules.push(`${file.rel}/${file.name}`);
+        await fs.promises.rm(file.path, { force: true }).catch(() => {
+        });
       }
     }
-    const keepRel = /* @__PURE__ */ new Map();
-    for (const item of pickup) {
-      const current = keepRel.get(item.folded);
-      const better = current === void 0 || moduleDirRank(item.rel) < moduleDirRank(current) || moduleDirRank(item.rel) === moduleDirRank(current) && item.rel < current;
-      if (better) keepRel.set(item.folded, item.rel);
+    const survivors = keptByName.filter((file) => fs.existsSync(file.path));
+    const sonames = /* @__PURE__ */ new Map();
+    for (const file of survivors) {
+      sonames.set(file, readElfDynamicInfo(file.path)?.soname ?? null);
     }
-    for (const item of pickup) {
-      if (keepRel.get(item.folded) !== item.rel) {
-        await fs.promises.rm(path.join(installDir, item.rel, item.file), { force: true });
+    const bySoname = /* @__PURE__ */ new Map();
+    for (const file of survivors) {
+      const soname = sonames.get(file);
+      if (!soname) continue;
+      const key = soname.toLowerCase();
+      if (preferred(file, bySoname.get(key))) bySoname.set(key, file);
+    }
+    for (const file of survivors) {
+      const soname = sonames.get(file);
+      if (!soname) continue;
+      if (bySoname.get(soname.toLowerCase()) !== file) {
+        await fs.promises.rm(file.path, { force: true }).catch(() => {
+        });
       }
     }
-    for (const rel of prxDirs) {
-      const dir = path.join(installDir, rel);
-      for (const file of await fs.promises.readdir(dir)) {
-        if (!file.endsWith(".prx")) continue;
-        const filePath = path.join(dir, file);
-        const kind = detectContainer(filePath);
-        if (kind === "self") {
-          emit(`Unwrapping ${file}…`, 60, "preparing-modules");
-          await unwrapSelf(filePath, filePath);
-        } else if (kind !== "elf") {
-          throw new Error(
-            `${path.join(rel, file)} is neither a plain ELF nor a SELF container — the dump's module is corrupted or incomplete.`
-          );
-        }
+    const moduleFiles = survivors.filter((file) => fs.existsSync(file.path));
+    const moduleDirs = [...new Set(moduleFiles.map((file) => file.rel))].filter((rel) => {
+      const key = rel.replace(/\\/g, "/").toLowerCase();
+      return key !== "sce_module" && key !== "sce_modules" && key !== "prx";
+    }).sort((a, b) => moduleDirRank(a) - moduleDirRank(b) || a.localeCompare(b));
+    const hasStandardDir = ["sce_module", "sce_modules", "prx"].some((dir) => {
+      try {
+        return fs.statSync(path.join(installDir, dir)).isDirectory();
+      } catch {
+        return false;
       }
+    });
+    if (!hasStandardDir && moduleDirs.length === 0) {
+      const target = path.join(installDir, "sce_module");
+      if (fs.existsSync(target)) {
+        throw new Error(
+          'A file named "sce_module" is in the way of the module folder — remove or rename it in the dump and retry.'
+        );
+      }
+      await fs.promises.mkdir(target, { recursive: true });
     }
     const modDir = path.join(installDir, "sce_module");
     emit("Converting to a Windows executable…", 68, "relinking");
-    const safeName = name.replace(/[\\/:*?"<>|]/g, "").trim() || "game";
-    const exePath = path.join(installDir, `${safeName}.exe`);
-    await relink(inputElf, exePath, void 0, installDir, moduleDirs);
-    for (const rel of prxDirs) {
-      const dir = path.join(installDir, rel);
-      for (const file of await fs.promises.readdir(dir).catch(() => [])) {
-        if (file.endsWith(".prx") && !file.endsWith(".guest.prx")) {
-          await fs.promises.rm(path.join(dir, file), { force: true });
-        }
+    const exePath = path.join(installDir, exeName);
+    let relinkTail = "";
+    let relinkMapped = 68;
+    const onRelinkOutput = (chunk) => {
+      const frames = (relinkTail + chunk).split(/[\r\n]/);
+      relinkTail = frames.pop() ?? "";
+      for (const frame of frames) {
+        const match = frame.match(
+          /(Executable|PRX conversion|Syscall scan|Instruction scan|Instruction conversion|Import analysis|Output image|Write output)\s*\|\s*[^|]*\|\s*(\d{1,3})%/
+        );
+        if (!match) continue;
+        const slice = RELINK_PROGRESS[match[1]];
+        if (!slice) continue;
+        const [base, span] = slice;
+        const stagePercent = Math.min(100, Number(match[2]));
+        const mapped = Math.min(88, base + span * stagePercent / 100);
+        relinkMapped = Math.max(relinkMapped, mapped);
+        emit(`Converting — ${match[1].toLowerCase()} ${stagePercent}%`, relinkMapped, "relinking");
       }
+    };
+    const runRelink = (excludeModules = []) => relink(inputElf, exePath, {
+      cwd: installDir,
+      moduleDirs,
+      windowsDiagnostics: true,
+      onOutput: onRelinkOutput,
+      excludeModules
+    });
+    const relinkBestEffort = async () => {
+      try {
+        return await runRelink();
+      } catch (error) {
+        if (!(error instanceof RelinkError) || !/guest|module/i.test(error.detail)) throw error;
+        let lastError = error;
+        const names = identifyOffendingModules(error.detail, error.output, moduleFiles, sonames);
+        if (names.length > 0) {
+          emit(
+            `Conversion failed — retrying without ${names.length === 1 ? names[0] : `${names.length} module files`}…`,
+            68,
+            "relinking"
+          );
+          for (const name2 of names) if (!skippedModules.includes(name2)) skippedModules.push(name2);
+          try {
+            return await runRelink(names);
+          } catch (retryError) {
+            if (!(retryError instanceof RelinkError)) throw retryError;
+            lastError = retryError;
+          }
+        }
+        const allNames = [...new Set(moduleFiles.map((file) => file.name))];
+        const alreadyExcludedAll = names.length > 0 && allNames.every((name2) => names.includes(name2));
+        if (allNames.length > 0 && !alreadyExcludedAll) {
+          emit("Conversion failed — retrying without bundled modules…", 68, "relinking");
+          for (const name2 of allNames) if (!skippedModules.includes(name2)) skippedModules.push(name2);
+          try {
+            return await runRelink(allNames);
+          } catch (retryError) {
+            if (!(retryError instanceof RelinkError)) throw retryError;
+            lastError = retryError;
+          }
+        }
+        throw lastError;
+      }
+    };
+    const relinked = await relinkBestEffort();
+    if (relinked.skippedSelf.length > 0) {
+      console.warn(
+        `[install] relinker skipped SELF containers: ${relinked.skippedSelf.join(", ")}`
+      );
+    }
+    if (!fs.existsSync(exePath)) {
+      throw new Error(
+        "Conversion finished without producing an executable — the dump is incomplete or the converter was interrupted. Retry the installation."
+      );
+    }
+    if (detectContainer(exePath) !== "pe") {
+      throw new Error(
+        "Conversion produced a file that is not a Windows executable — the converter output is corrupted. Retry the installation."
+      );
+    }
+    for (const file of moduleFiles) {
+      await fs.promises.rm(file.path, { force: true }).catch(() => {
+      });
     }
     emit("Building runtime layout…", 88, "building-layout");
-    await buildLayout(installDir, [path.basename(exePath), "cover.png"]);
-    let cover = null;
-    try {
-      await fs.promises.copyFile(
-        path.join(installDir, "app0", "sce_sys", "icon0.png"),
-        path.join(installDir, "cover.png")
+    await buildLayout(installDir, [
+      path.basename(exePath),
+      "cover.png",
+      // AnyPS5's startup dependency report — keep it next to the exe for
+      // support instead of burying it under app0.
+      "windows-diagnostics-imports.txt"
+    ]);
+    if (!fs.existsSync(path.join(installDir, "app0"))) {
+      throw new Error(
+        "The runtime app0/ folder was not created — the conversion was incomplete. Retry the installation."
       );
-      cover = "cover.png";
-    } catch {
+    }
+    phase = "converted";
+    let cover = null;
+    for (const candidate of ["icon0.png", "pic0.png", "pic1.png"]) {
+      try {
+        await fs.promises.copyFile(
+          path.join(installDir, "app0", "sce_sys", candidate),
+          path.join(installDir, "cover.png")
+        );
+        cover = "cover.png";
+        break;
+      } catch {
+      }
     }
     emit("Finalizing…", 95, "finalizing");
     await fs.promises.rm(ebootDest, { force: true });
@@ -1448,9 +2618,10 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       });
       tempDir = null;
     }
-    const retire = `${finalDir}.old`;
+    let retire = `${finalDir}.old`;
     await fs.promises.rm(retire, { recursive: true, force: true }).catch(() => {
     });
+    if (fs.existsSync(retire)) retire = `${finalDir}.old-${Date.now()}`;
     if (fs.existsSync(finalDir)) {
       await fs.promises.rename(finalDir, retire);
     }
@@ -1472,12 +2643,50 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     } catch (error) {
       probe2 = { state: "failed", detail: error instanceof Error ? error.message : String(error) };
     }
+    const skipped = [.../* @__PURE__ */ new Set([...relinked.skippedSelf, ...skippedModules])];
+    if (probe2.state === "failed" && skipped.length > 0) {
+      const listed = skipped.slice(0, 3).join(", ");
+      const more = skipped.length > 3 ? ` and ${skipped.length - 3} more` : "";
+      const hint = relinked.skippedSelf.length > 0 ? "decrypt the dump and retry for the best chance" : "re-copy or re-extract the dump for the best chance";
+      probe2 = {
+        ...probe2,
+        detail: `${probe2.detail} — the converter skipped ${skipped.length === 1 ? "a module" : `${skipped.length} modules`} (${listed}${more}); ${hint}.`
+      };
+    }
+    let compatibility;
+    if (probe2.state === "failed" && probe2.trophyAbort) {
+      const trophyId = probe2.trophyAbort.trophyId;
+      emit("Launch test — retrying with placeholder trophy data…", 98, "launch-test");
+      const hidden = await setTrophyDataMode(finalDir, "placeholders");
+      if (hidden.changed.length > 0) {
+        compatibility = { trophyData: "placeholders" };
+        try {
+          probe2 = await probeLaunch(path.join(finalDir, path.basename(exePath)), finalDir);
+        } catch (error) {
+          probe2 = {
+            state: "failed",
+            detail: error instanceof Error ? error.message : String(error)
+          };
+        }
+        if (probe2.state === "works") {
+          probe2 = {
+            ...probe2,
+            detail: `${probe2.detail} — trophy data hidden: the runtime aborts on trophy ${trophyId}, which the game's own trophy package does not define`
+          };
+        }
+      } else if (hidden.error) {
+        probe2 = {
+          ...probe2,
+          detail: `${probe2.detail}; could not hide the trophy package: ${hidden.error}`
+        };
+      }
+    }
     const sizeBytes = await dirSize(finalDir);
     const game = {
       id,
       name,
       titleId: meta.titleId,
-      sourcePath: dumpRoot,
+      sourcePath: persistentSource,
       installPath: finalDir,
       exePath: path.join(finalDir, path.basename(exePath)),
       sizeBytes,
@@ -1485,7 +2694,8 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       status: "ready",
       installedAt: Date.now(),
       launchState: probe2.state,
-      launchDetail: probe2.detail
+      launchDetail: probe2.detail,
+      ...compatibility ? { compatibility } : {}
     };
     await addGame(game);
     report({
@@ -1501,6 +2711,17 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
     });
     return game;
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (phase === "converting") {
+      try {
+        const game = await registerFailed(message);
+        if (game) return game;
+      } catch (fallbackError) {
+        console.warn(
+          `[install] could not keep the failed conversion: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`
+        );
+      }
+    }
     if (tempDir) await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {
     });
     if (stageDir) {
@@ -1508,7 +2729,6 @@ async function installGame(sourcePath, nameOverride, report, jobId) {
       await fs.promises.rm(stageDir, { recursive: true, force: true }).catch(() => {
       });
     }
-    const message = error instanceof Error ? error.message : String(error);
     report({ jobId, step, message: "Failed", percent, status: "error", error: message });
     throw error;
   }
@@ -1535,9 +2755,9 @@ function normalizeVersion(tag) {
   const flat = tag.replace(/^runtime[-v]*/i, "").replace(/^v/i, "");
   return flat || tag;
 }
-function requestBuffer(url, headers, timeoutMs, redirect = 0) {
+function requestBuffer(url2, headers, timeoutMs, redirect = 0) {
   return new Promise((resolve, reject) => {
-    const request = electron.net.request(url);
+    const request = electron.net.request(url2);
     for (const [key, value] of Object.entries(headers)) request.setHeader(key, value);
     const timer = setTimeout(() => {
       request.abort();
@@ -1553,7 +2773,7 @@ function requestBuffer(url, headers, timeoutMs, redirect = 0) {
         const status = response.statusCode ?? 0;
         if (status >= 300 && status < 400 && location) {
           if (redirect >= 5) return reject(new Error("too many redirects"));
-          resolve(requestBuffer(new URL(location, url).toString(), headers, timeoutMs, redirect + 1));
+          resolve(requestBuffer(new URL(location, url2).toString(), headers, timeoutMs, redirect + 1));
           return;
         }
         resolve({ status, body: Buffer.concat(chunks) });
@@ -1570,9 +2790,9 @@ function requestBuffer(url, headers, timeoutMs, redirect = 0) {
     request.end();
   });
 }
-async function fetchHtml(url) {
+async function fetchHtml(url2) {
   const response = await requestBuffer(
-    url,
+    url2,
     {
       "User-Agent": "NovaPS5",
       Accept: "text/html,application/xhtml+xml",
@@ -1615,9 +2835,9 @@ async function findLatestRuntime(repo) {
     bundle: assets.find((a) => a.name === RUNTIME_ASSET)
   };
 }
-function downloadFile(url, dest, onPercent, redirect = 0) {
+function downloadFile(url2, dest, onPercent, redirect = 0) {
   return new Promise((resolve, reject) => {
-    const request = electron.net.request(url);
+    const request = electron.net.request(url2);
     request.setHeader("User-Agent", "NovaPS5");
     let settled = false;
     const finish = (err) => {
@@ -1638,7 +2858,7 @@ function downloadFile(url, dest, onPercent, redirect = 0) {
         response.resume();
         clearTimeout(timer);
         if (redirect >= 5) return finish(new Error("too many redirects"));
-        downloadFile(new URL(location, url).toString(), dest, onPercent, redirect + 1).then(
+        downloadFile(new URL(location, url2).toString(), dest, onPercent, redirect + 1).then(
           () => finish(),
           (err) => finish(err)
         );
@@ -2179,6 +3399,765 @@ function dismissWhatsNew() {
   delete store.notice;
   writeStore(store);
 }
+const STORE_REGIONS = [
+  { code: "GB", language: "en", label: "United Kingdom" },
+  { code: "IE", language: "en", label: "Ireland" },
+  { code: "DE", language: "de", label: "Germany" },
+  { code: "FR", language: "fr", label: "France" },
+  { code: "ES", language: "es", label: "Spain" },
+  { code: "IT", language: "it", label: "Italy" },
+  { code: "NL", language: "nl", label: "Netherlands" },
+  { code: "AT", language: "de", label: "Austria" },
+  { code: "CH", language: "de", label: "Switzerland" },
+  { code: "AU", language: "en", label: "Australia" },
+  { code: "JP", language: "ja", label: "Japan" },
+  { code: "US", language: "en", label: "United States" }
+];
+const DEFAULT_REGION = STORE_REGIONS[0];
+const GENRE_LABELS = {
+  ACTION: "Action",
+  ADVENTURE: "Adventure",
+  ARCADE: "Arcade",
+  BRAIN_TRAINING: "Brain Training",
+  CASUAL: "Casual",
+  EDUCATIONAL: "Educational",
+  FAMILY: "Family",
+  FIGHTING: "Fighting",
+  FITNESS: "Fitness",
+  HORROR: "Horror",
+  MUSICRHYTHM: "Music/Rhythm",
+  PARTY: "Party",
+  PUZZLE: "Puzzle",
+  QUIZ: "Quiz",
+  RACING: "Racing",
+  ROLE_PLAYING_GAMES: "RPG",
+  SHOOTER: "Shooter",
+  SIMULATION: "Simulation",
+  SIMULATOR: "Simulator",
+  SPORTS: "Sports",
+  STRATEGY: "Strategy",
+  UNIQUE: "Unique"
+};
+const STORE_GENRES = [
+  { key: "action", label: "Action" },
+  { key: "adventure", label: "Adventure" },
+  { key: "role_playing_games", label: "RPG" },
+  { key: "shooter", label: "Shooter" },
+  { key: "racing", label: "Racing" },
+  { key: "sports", label: "Sports" },
+  { key: "horror", label: "Horror" },
+  { key: "puzzle", label: "Puzzle" },
+  { key: "simulation", label: "Simulation" },
+  { key: "strategy", label: "Strategy" },
+  { key: "fighting", label: "Fighting" },
+  { key: "family", label: "Family" }
+];
+const FEATURED_TITLES = [
+  "ASTRO BOT",
+  "Marvels Spider Man 2",
+  "God of War Ragnarök",
+  "Horizon Forbidden West",
+  "Gran Turismo 7",
+  "Ghost of Tsushima",
+  "Hogwarts Legacy",
+  "Cyberpunk 2077",
+  "Baldurs Gate 3",
+  "The Last of Us Part I"
+];
+const REQUEST_TIMEOUT_MS = 15e3;
+const cache$2 = /* @__PURE__ */ new Map();
+function cacheGet(key) {
+  const hit = cache$2.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > hit.ttl) {
+    cache$2.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+function cacheSet(key, value, ttl) {
+  cache$2.set(key, { at: Date.now(), ttl, value });
+}
+function clampInt(value, min, max, fallback) {
+  const n = Number.isFinite(value) ? Math.floor(value) : fallback;
+  return Math.min(max, Math.max(min, n));
+}
+async function fetchJson(url2) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url2, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Accept-Language": "en-GB,en;q=0.9",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+      }
+    });
+    if (!response.ok) throw new Error(`PlayStation Store returned ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("The PlayStation Store did not respond in time.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function firstImage(images, types) {
+  for (const type of types) {
+    const image = images.find((candidate) => candidate?.type === type && typeof candidate?.url === "string");
+    if (image) return image.url;
+  }
+  return null;
+}
+function packageSize(link) {
+  let size = 0;
+  const entitlements = Array.isArray(link?.default_sku?.entitlements) ? link.default_sku.entitlements : [];
+  for (const entitlement of entitlements) {
+    for (const pkg of Array.isArray(entitlement?.packages) ? entitlement.packages : []) {
+      const platform = String(pkg?.platformName ?? "").toLowerCase();
+      const bytes2 = Number(pkg?.size);
+      if (platform === "ps5" && Number.isFinite(bytes2) && bytes2 > 0) size = Math.max(size, bytes2);
+    }
+    const bytes = Number(entitlement?.size);
+    if (Number.isFinite(bytes) && bytes > 0) size = Math.max(size, bytes);
+  }
+  return size > 0 ? size : null;
+}
+function genreLabels(link) {
+  const raw = link?.metadata?.genre?.values ?? link?.metadata?.game_genre?.values ?? [];
+  const labels = /* @__PURE__ */ new Set();
+  for (const value of raw) {
+    const key = String(value).toUpperCase();
+    const label = GENRE_LABELS[key] ?? key.toLowerCase().split("_").map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+    if (label) labels.add(label);
+  }
+  return [...labels];
+}
+function storeLocale(region) {
+  return `${region.language}-${region.code}`.toLowerCase();
+}
+const ALLOWED_CLASSIFICATIONS = /* @__PURE__ */ new Set([
+  "FULL_GAME",
+  "PREMIUM_EDITION",
+  "BUNDLE",
+  "GAME_BUNDLE",
+  "DELUXE_EDITION",
+  "ULTIMATE_EDITION",
+  "STANDARD_EDITION"
+]);
+function parseProduct(link, region) {
+  const productId = typeof link?.id === "string" ? link.id : null;
+  if (!productId) return null;
+  const platforms = Array.isArray(link?.playable_platform) ? link.playable_platform : [];
+  if (!platforms.some((platform) => /ps5/i.test(String(platform)))) return null;
+  if (link?.top_category === "add_on") return null;
+  const classification = link?.metadata?.store_display_classification?.values?.[0];
+  if (typeof classification === "string" && !ALLOWED_CLASSIFICATIONS.has(classification)) return null;
+  const name = String(link?.name ?? link?.title_name ?? "").trim();
+  if (!name) return null;
+  const images = Array.isArray(link?.images) ? link.images : [];
+  const coverUrl = firstImage(images, [10, 1, 12, 13]);
+  if (!coverUrl) return null;
+  const titleMatch = productId.match(/(PPSA\d{5}|CUSA\d{5})/);
+  return {
+    id: `psn:${productId}`,
+    source: "psn",
+    name,
+    titleId: titleMatch ? titleMatch[1] : null,
+    publisher: typeof link?.provider_name === "string" ? link.provider_name : null,
+    genres: genreLabels(link),
+    releaseDate: typeof link?.release_date === "string" ? link.release_date : null,
+    coverUrl,
+    heroUrl: firstImage(images, [12, 13, 14, 10]),
+    sizeBytes: packageSize(link),
+    downloadUrl: null,
+    sha256: null,
+    storeUrl: `https://store.playstation.com/${storeLocale(region)}/product/${encodeURIComponent(productId)}`
+  };
+}
+function normalizeName(name) {
+  return name.toLowerCase().replace(/[™®©]/g, "").replace(/\b(ps4|ps5)\b/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim();
+}
+function dedupeGames(games) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const game of games) {
+    const key = normalizeName(game.name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(game);
+  }
+  return out;
+}
+function matchesGenre(game, genre) {
+  if (!genre) return true;
+  const label = GENRE_LABELS[genre.toUpperCase()] ?? genre;
+  return game.genres.some((value) => value.toLowerCase() === label.toLowerCase());
+}
+function pageResult(games, total, offset, size, region, error) {
+  return {
+    games,
+    total,
+    offset,
+    size,
+    hasMore: offset + size < total,
+    region: region.code,
+    error
+  };
+}
+async function browsePsn(query = {}, region = DEFAULT_REGION) {
+  const requestedSize = clampInt(query.size, 1, 100, 40);
+  const genreIndex = query.genre ? STORE_GENRES.findIndex((entry) => entry.key === query.genre) : -1;
+  const size = Math.min(100, requestedSize + (genreIndex >= 0 ? genreIndex + 1 : 0));
+  const offset = Math.max(0, Math.floor(query.offset ?? 0));
+  const params = new URLSearchParams({
+    size: String(size),
+    start: String(offset),
+    game_content_type: "games",
+    platform: "ps5",
+    sort: "release_date",
+    direction: "desc"
+  });
+  if (query.genre) {
+    params.set("genre", query.genre);
+  } else {
+    params.set("release_date", "last_30_days");
+  }
+  const fetchFor = (target) => fetchJson(
+    `https://store.playstation.com/store/api/chihiro/00_09_000/container/${target.code}/${target.language}/999/STORE-MSF75508-FULLGAMES?${params.toString()}`
+  );
+  let used = region;
+  let json;
+  try {
+    json = await fetchFor(region);
+  } catch (error) {
+    if (region.code === DEFAULT_REGION.code) throw error;
+    used = DEFAULT_REGION;
+    json = await fetchFor(used);
+  }
+  const links = Array.isArray(json?.links) ? json.links : [];
+  const games = dedupeGames(
+    links.map((link) => parseProduct(link, used)).filter((game) => game !== null).filter((game) => matchesGenre(game, query.genre))
+  );
+  const total = Math.max(Number(json?.total_results) || 0, offset + games.length);
+  return pageResult(
+    games,
+    total,
+    offset,
+    size,
+    used,
+    used.code !== region.code ? `The ${region.label} catalog is unavailable — showing ${used.label}.` : void 0
+  );
+}
+async function searchPsn(query = {}, region = DEFAULT_REGION) {
+  const rawText = (query.text ?? "").trim();
+  const text = rawText.replace(/['’™®©]/g, "").replace(/\s+/g, " ").trim();
+  if (!text) return browsePsn(query, region);
+  const size = clampInt(query.size, 1, 40, 30);
+  const offset = Math.max(0, Math.floor(query.offset ?? 0));
+  const wanted = Math.min(size, 12);
+  const collected = [];
+  let cursor = offset;
+  let total = 0;
+  for (let page = 0; page < 4; page += 1) {
+    const url2 = `https://store.playstation.com/store/api/chihiro/00_09_000/tumbler/${region.code}/${region.language}/999/${encodeURIComponent(text)}?size=${size}&mode=game&start=${cursor}`;
+    const json = await fetchJson(url2);
+    total = Math.max(total, Number(json?.total_results) || 0);
+    const links = Array.isArray(json?.links) ? json.links : [];
+    collected.push(
+      ...links.map((link) => parseProduct(link, region)).filter((game) => game !== null).filter((game) => matchesGenre(game, query.genre))
+    );
+    cursor += size;
+    if (collected.length >= wanted || cursor >= total || links.length === 0) break;
+  }
+  const games = dedupeGames(collected);
+  const consumed = Math.max(size, cursor - offset);
+  return pageResult(games, Math.max(total, offset + games.length), offset, consumed, region);
+}
+async function featuredPsn(region = DEFAULT_REGION) {
+  const key = `featured:${region.code}`;
+  const cached2 = cacheGet(key);
+  if (cached2) return cached2;
+  const results = await Promise.allSettled(
+    FEATURED_TITLES.map((title) => searchPsn({ text: title, size: 5 }, region))
+  );
+  const games = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index];
+    if (result.status !== "fulfilled") continue;
+    const wanted = normalizeName(FEATURED_TITLES[index]);
+    const match = result.value.games.find((game) => !seen.has(game.id) && normalizeName(game.name) === wanted) ?? result.value.games.find((game) => !seen.has(game.id));
+    if (match) {
+      seen.add(match.id);
+      games.push(match);
+    }
+  }
+  if (games.length > 0) cacheSet(key, games, 15 * 6e4);
+  return games;
+}
+const CATALOG_TTL_MS = 2 * 6e4;
+const MAX_EMBEDDED_COVER_BYTES = 4 * 1024 * 1024;
+const cache$1 = /* @__PURE__ */ new Map();
+function slug$1(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "game";
+}
+function isHttp$1(value) {
+  return /^https?:\/\//i.test(value);
+}
+function resolveTarget(value, base) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (isHttp$1(trimmed) || trimmed.startsWith("file://")) return trimmed;
+  if (!base) return trimmed;
+  if (isHttp$1(base)) {
+    try {
+      return new URL(trimmed, base).toString();
+    } catch {
+      return null;
+    }
+  }
+  return path.resolve(base, trimmed);
+}
+async function resolveCover(value, base) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const raw = value.trim();
+  if (/^(https?:|data:)/i.test(raw)) return raw;
+  if (!base) return null;
+  if (isHttp$1(base)) {
+    try {
+      return new URL(raw, base).toString();
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const file = raw.startsWith("file://") ? url.fileURLToPath(raw) : path.resolve(base, raw);
+    const stat = await fs.promises.stat(file);
+    if (!stat.isFile() || stat.size > MAX_EMBEDDED_COVER_BYTES) return null;
+    const data = await fs.promises.readFile(file);
+    const ext = path.extname(file).toLowerCase();
+    const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+    return `data:${mime};base64,${data.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+async function toStoreGame(raw, base, index) {
+  const name = String(raw?.name ?? raw?.title ?? "").trim();
+  if (!name) return null;
+  const id = String(raw?.id ?? `${slug$1(name)}-${index}`).trim() || `${slug$1(name)}-${index}`;
+  const downloadUrl = resolveTarget(
+    String(raw?.downloadUrl ?? raw?.download ?? raw?.url ?? "").trim(),
+    base
+  );
+  return {
+    id: `catalog:${id}`,
+    source: "catalog",
+    name,
+    titleId: typeof raw?.titleId === "string" ? raw.titleId : null,
+    publisher: typeof raw?.publisher === "string" ? raw.publisher : null,
+    genres: Array.isArray(raw?.genres) ? raw.genres.map(String) : [],
+    releaseDate: typeof raw?.releaseDate === "string" ? raw.releaseDate : null,
+    coverUrl: await resolveCover(raw?.coverUrl ?? raw?.cover, base) ?? null,
+    heroUrl: await resolveCover(raw?.heroUrl ?? raw?.hero, base) ?? null,
+    sizeBytes: Number.isFinite(Number(raw?.sizeBytes)) ? Number(raw.sizeBytes) : null,
+    downloadUrl,
+    sha256: typeof raw?.sha256 === "string" ? raw.sha256 : null,
+    storeUrl: typeof raw?.storeUrl === "string" ? raw.storeUrl : null
+  };
+}
+async function readCatalog(source) {
+  if (isHttp$1(source)) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15e3);
+    try {
+      const response = await fetch(source, {
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        }
+      });
+      if (!response.ok) throw new Error(`Catalog returned ${response.status}`);
+      return { text: await response.text(), base: source };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  const file = source.startsWith("file://") ? url.fileURLToPath(source) : path.resolve(source);
+  const text = await fs.promises.readFile(file, "utf8");
+  return { text: text.charCodeAt(0) === 65279 ? text.slice(1) : text, base: path.dirname(file) };
+}
+async function loadCatalog(settings) {
+  const source = settings.catalogUrl?.trim();
+  if (!source) return [];
+  const cached2 = cache$1.get(source);
+  if (cached2 && Date.now() - cached2.at < CATALOG_TTL_MS) return cached2.value;
+  const { text, base } = await readCatalog(source);
+  const parsed = JSON.parse(text);
+  const rawGames = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.games) ? parsed.games : [];
+  const games = (await Promise.all(rawGames.map((raw, index) => toStoreGame(raw, base, index)))).filter((game) => game !== null);
+  cache$1.set(source, { at: Date.now(), value: games });
+  return games;
+}
+function invalidateCatalog() {
+  cache$1.clear();
+}
+const DEFAULT_STORE_SETTINGS = {
+  region: "GB",
+  language: "en",
+  catalogUrl: null
+};
+function storeFile() {
+  return path.join(libraryRoot(), "store.json");
+}
+let cache = null;
+let loading = null;
+let persistQueue = Promise.resolve();
+function sanitizeSettings(value) {
+  const raw = value && typeof value === "object" ? value : {};
+  return {
+    region: typeof raw.region === "string" && raw.region.trim() ? raw.region.trim().toUpperCase() : DEFAULT_STORE_SETTINGS.region,
+    language: typeof raw.language === "string" && raw.language.trim() ? raw.language.trim().toLowerCase() : DEFAULT_STORE_SETTINGS.language,
+    catalogUrl: typeof raw.catalogUrl === "string" && raw.catalogUrl.trim() ? raw.catalogUrl.trim() : null
+  };
+}
+function sanitizeEntry(value) {
+  const raw = value;
+  if (!raw) return null;
+  const game = raw.game;
+  if (!game || typeof game.id !== "string" || typeof game.name !== "string") return null;
+  return {
+    game: {
+      id: game.id,
+      source: game.source === "catalog" ? "catalog" : "psn",
+      name: game.name,
+      titleId: typeof game.titleId === "string" ? game.titleId : null,
+      publisher: typeof game.publisher === "string" ? game.publisher : null,
+      genres: Array.isArray(game.genres) ? game.genres.map(String) : [],
+      releaseDate: typeof game.releaseDate === "string" ? game.releaseDate : null,
+      coverUrl: typeof game.coverUrl === "string" ? game.coverUrl : null,
+      heroUrl: typeof game.heroUrl === "string" ? game.heroUrl : null,
+      sizeBytes: Number.isFinite(Number(game.sizeBytes)) ? Number(game.sizeBytes) : null,
+      downloadUrl: typeof game.downloadUrl === "string" ? game.downloadUrl : null,
+      sha256: typeof game.sha256 === "string" ? game.sha256 : null,
+      storeUrl: typeof game.storeUrl === "string" ? game.storeUrl : null
+    },
+    addedAt: Number.isFinite(Number(raw.addedAt)) ? Number(raw.addedAt) : Date.now(),
+    status: raw.status === "downloading" || raw.status === "downloaded" || raw.status === "installed" ? raw.status : "wishlist",
+    localPath: typeof raw.localPath === "string" ? raw.localPath : void 0,
+    installedGameId: typeof raw.installedGameId === "string" ? raw.installedGameId : void 0
+  };
+}
+async function readStoreFile(file) {
+  const raw = await fs.promises.readFile(file, "utf8");
+  const text = raw.charCodeAt(0) === 65279 ? raw.slice(1) : raw;
+  const parsed = JSON.parse(text);
+  return {
+    settings: sanitizeSettings(parsed?.settings),
+    entries: Array.isArray(parsed?.entries) ? parsed.entries.map(sanitizeEntry).filter(Boolean) : []
+  };
+}
+async function load() {
+  if (cache) return cache;
+  if (loading) return loading;
+  loading = (async () => {
+    const empty = { settings: { ...DEFAULT_STORE_SETTINGS }, entries: [] };
+    let loaded;
+    try {
+      loaded = await readStoreFile(storeFile());
+    } catch {
+      try {
+        loaded = await readStoreFile(`${storeFile()}.bak`);
+      } catch {
+        loaded = empty;
+      }
+    }
+    cache = loaded;
+    return loaded;
+  })();
+  try {
+    return await loading;
+  } finally {
+    loading = null;
+  }
+}
+function persist() {
+  const task = persistQueue.then(async () => {
+    if (!cache) return;
+    const file = storeFile();
+    ensureDir(path.dirname(file));
+    const tmp = `${file}.tmp`;
+    await fs.promises.writeFile(tmp, JSON.stringify(cache, null, 2), "utf8");
+    await fs.promises.copyFile(file, `${file}.bak`).catch(() => {
+    });
+    await fs.promises.rename(tmp, file);
+  });
+  persistQueue = task.catch(() => {
+  });
+  return task;
+}
+async function getStoreSettings() {
+  return { ...(await load()).settings };
+}
+async function updateStoreSettings(patch) {
+  const data = await load();
+  data.settings = sanitizeSettings({ ...data.settings, ...patch });
+  await persist();
+  return { ...data.settings };
+}
+async function listStoreEntries() {
+  const data = await load();
+  return [...data.entries].sort((a, b) => b.addedAt - a.addedAt);
+}
+async function getStoreEntry(id) {
+  return (await load()).entries.find((entry) => entry.game.id === id);
+}
+async function addStoreEntry(game) {
+  const data = await load();
+  const existing = data.entries.find((entry) => entry.game.id === game.id);
+  if (existing) {
+    existing.game = {
+      ...game,
+      downloadUrl: game.downloadUrl ?? existing.game.downloadUrl,
+      sha256: game.sha256 ?? existing.game.sha256
+    };
+  } else {
+    data.entries.push({ game: { ...game }, addedAt: Date.now(), status: "wishlist" });
+  }
+  await persist();
+  return listStoreEntries();
+}
+async function removeStoreEntry(id) {
+  const data = await load();
+  data.entries = data.entries.filter((entry) => entry.game.id !== id);
+  await persist();
+  return listStoreEntries();
+}
+async function setStoreDownloadUrl(id, url2) {
+  const data = await load();
+  const entry = data.entries.find((candidate) => candidate.game.id === id);
+  if (!entry) throw new Error("Add this game to your library before giving it a download URL.");
+  entry.game.downloadUrl = url2?.trim() ? url2.trim() : null;
+  await persist();
+  return listStoreEntries();
+}
+async function updateStoreEntry(id, patch) {
+  const data = await load();
+  const entry = data.entries.find((candidate) => candidate.game.id === id);
+  if (!entry) return;
+  if (patch.status) entry.status = patch.status;
+  if (patch.localPath !== void 0) entry.localPath = patch.localPath;
+  if (patch.installedGameId !== void 0) entry.installedGameId = patch.installedGameId;
+  await persist();
+}
+const active = /* @__PURE__ */ new Map();
+const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+function isHttp(value) {
+  return /^https?:\/\//i.test(value);
+}
+function slug(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "game";
+}
+function fileNameFromUrl(url2, name) {
+  try {
+    const parsed = new URL(url2);
+    const base = path.basename(decodeURIComponent(parsed.pathname.split("/").pop() ?? ""));
+    const match = base.match(/\.(zip|rar|7z)$/i);
+    if (match) {
+      const ext = match[1].toLowerCase();
+      return `${slug(base.slice(0, -match[0].length))}.${ext}`;
+    }
+    return `${slug(base.replace(/\.[^.]+$/, "") || name)}.zip`;
+  } catch {
+    return `${slug(name)}.zip`;
+  }
+}
+function makeReport(jobId, game, emit) {
+  return (step, message, percent, extra = {}) => {
+    emit({
+      jobId,
+      gameId: game.id,
+      gameName: game.name,
+      step,
+      message,
+      percent: Math.max(0, Math.min(100, Math.round(percent))),
+      status: "running",
+      ...extra
+    });
+  };
+}
+async function installFromPath(game, sourcePath, jobId, emit, basePercent) {
+  const span = 100 - basePercent;
+  const installed = await installGame(
+    sourcePath,
+    game.name,
+    (progress) => {
+      if (progress.status !== "running") return;
+      emit({
+        jobId,
+        gameId: game.id,
+        gameName: game.name,
+        step: "installing",
+        message: progress.message,
+        percent: Math.max(0, Math.min(100, Math.round(basePercent + progress.percent / 100 * span))),
+        status: "running"
+      });
+    },
+    jobId
+  );
+  await updateStoreEntry(game.id, { status: "installed", installedGameId: installed.id }).catch(
+    () => {
+    }
+  );
+  emit({
+    jobId,
+    gameId: game.id,
+    gameName: game.name,
+    step: "done",
+    message: `${game.name} installed`,
+    percent: 100,
+    status: "done",
+    installedGameId: installed.id
+  });
+}
+async function startStoreDownload(game, url$1, jobId, emit) {
+  const report = makeReport(jobId, game, emit);
+  const target = url$1.trim();
+  let destDir = null;
+  let connectTimedOut = false;
+  try {
+    await updateStoreEntry(game.id, { status: "downloading" });
+    if (!isHttp(target)) {
+      report("queued", `Opening ${game.name}…`, 1);
+      const local = target.startsWith("file://") ? url.fileURLToPath(target) : target;
+      if (!fs.existsSync(local)) throw new Error(`The catalog points at "${target}", which does not exist.`);
+      await installFromPath(game, local, jobId, emit, 0);
+      return;
+    }
+    destDir = path.join(downloadsRoot(), `${slug(game.name)}-${Date.now()}`);
+    ensureDir(destDir);
+    const dest = path.join(destDir, fileNameFromUrl(target, game.name));
+    const controller = new AbortController();
+    active.set(jobId, controller);
+    report("queued", `Connecting to the download server…`, 0);
+    const connectTimer = setTimeout(() => {
+      connectTimedOut = true;
+      controller.abort();
+    }, 45e3);
+    let response;
+    try {
+      response = await fetch(target, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: { "User-Agent": USER_AGENT, Accept: "*/*" }
+      });
+    } finally {
+      clearTimeout(connectTimer);
+    }
+    if (!response.ok || !response.body) {
+      throw new Error(`Download failed — the server returned ${response.status}.`);
+    }
+    const total = Number(response.headers.get("content-length")) || game.sizeBytes || 0;
+    const handle = await fs.promises.open(dest, "w");
+    const hash = game.sha256 ? crypto.createHash("sha256") : null;
+    const reader = response.body.getReader();
+    let received = 0;
+    let lastEmit = 0;
+    try {
+      for (; ; ) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        await handle.write(value);
+        received += value.length;
+        hash?.update(value);
+        const now = Date.now();
+        if (now - lastEmit > 250) {
+          lastEmit = now;
+          const percent = total > 0 ? Math.min(88, received / total * 88) : Math.min(88, 5 + received / (1024 * 1024));
+          report("downloading", `Downloading ${game.name}…`, percent, {
+            receivedBytes: received,
+            totalBytes: total || void 0
+          });
+        }
+      }
+    } finally {
+      await handle.close();
+      active.delete(jobId);
+    }
+    report("downloading", `Downloaded ${game.name}`, 90, {
+      receivedBytes: received,
+      totalBytes: total || void 0
+    });
+    if (hash && game.sha256) {
+      report("verifying", "Verifying the download…", 91);
+      const digest = hash.digest("hex").toLowerCase();
+      if (digest !== game.sha256.trim().toLowerCase()) {
+        throw new Error("The download did not match its SHA-256 checksum — it may be corrupted.");
+      }
+    }
+    if (!/\.(zip|rar|7z)$/i.test(dest)) {
+      throw new Error("The downloaded file is not an archive (.zip/.rar/.7z). Point the catalog at a game archive.");
+    }
+    await installFromPath(game, dest, jobId, emit, 91);
+    await fs.promises.rm(destDir, { recursive: true, force: true }).catch(() => {
+    });
+    destDir = null;
+  } catch (error) {
+    active.delete(jobId);
+    const aborted = error instanceof Error && (error.name === "AbortError" || /abort/i.test(error.message));
+    const message = connectTimedOut ? "The download server did not respond." : aborted ? "Download cancelled." : error instanceof Error ? error.message : String(error);
+    await updateStoreEntry(game.id, { status: "wishlist" }).catch(() => {
+    });
+    emit({
+      jobId,
+      gameId: game.id,
+      gameName: game.name,
+      step: "error",
+      message: "Download failed",
+      percent: 0,
+      status: "error",
+      error: message
+    });
+    if (destDir) await fs.promises.rm(destDir, { recursive: true, force: true }).catch(() => {
+    });
+    throw error;
+  }
+}
+async function startStoreLocalInstall(game, sourcePath, jobId, emit) {
+  const report = makeReport(jobId, game, emit);
+  try {
+    await updateStoreEntry(game.id, { status: "downloading" });
+    report("queued", `Preparing ${game.name}…`, 1);
+    await installFromPath(game, sourcePath, jobId, emit, 0);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await updateStoreEntry(game.id, { status: "wishlist" }).catch(() => {
+    });
+    emit({
+      jobId,
+      gameId: game.id,
+      gameName: game.name,
+      step: "error",
+      message: "Install failed",
+      percent: 0,
+      status: "error",
+      error: message
+    });
+    throw error;
+  }
+}
+function cancelStoreDownload(jobId) {
+  const controller = active.get(jobId);
+  if (!controller) return;
+  controller.abort();
+  active.delete(jobId);
+}
 async function appInfo() {
   const { relinker, libs } = toolingPresent();
   return {
@@ -2195,8 +4174,91 @@ async function appInfo() {
     appRepo: APP_REPO
   };
 }
+function regionFor(settings) {
+  return STORE_REGIONS.find((r) => r.code === settings.region && r.language === settings.language) ?? STORE_REGIONS.find((r) => r.code === settings.region) ?? STORE_REGIONS[0];
+}
+function normalizedName(name) {
+  return name.toLowerCase().replace(/[™®©]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+}
+function searchableName(value) {
+  return value.toLowerCase().replace(/['’™®©]/g, "").replace(/\s+/g, " ").trim();
+}
+function mergeCatalog(catalog, games) {
+  const ids = new Set(catalog.map((game) => game.id));
+  const names = new Set(catalog.map((game) => normalizedName(game.name)));
+  return [
+    ...catalog,
+    ...games.filter((game) => !ids.has(game.id) && !names.has(normalizedName(game.name)))
+  ];
+}
+function catalogMatchesGenre(game, genre) {
+  if (!genre) return true;
+  const label = STORE_GENRES.find((entry) => entry.key === genre)?.label.toLowerCase() ?? genre.toLowerCase();
+  return game.genres.some((value) => value.toLowerCase() === label);
+}
+async function storeQuery(query = {}) {
+  const settings = await getStoreSettings();
+  const region = regionFor(settings);
+  let catalog = [];
+  let catalogError;
+  try {
+    catalog = (await loadCatalog(settings)).filter((game) => catalogMatchesGenre(game, query.genre));
+  } catch (error) {
+    catalogError = `Games catalog: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const size = Math.min(100, Math.max(1, Math.floor(query.size ?? 40)));
+  const offset = Math.max(0, Math.floor(query.offset ?? 0));
+  const text = query.text?.trim();
+  try {
+    const result = text ? await searchPsn(query, region) : await browsePsn(query, region);
+    if (text) {
+      const needle = searchableName(text);
+      const matches = catalog.filter(
+        (game) => searchableName(game.name).includes(needle) || searchableName(game.publisher ?? "").includes(needle)
+      );
+      return {
+        ...result,
+        games: mergeCatalog(matches, result.games),
+        total: result.total + matches.length,
+        error: catalogError ?? result.error
+      };
+    }
+    return {
+      ...result,
+      games: offset > 0 ? result.games : mergeCatalog(catalog, result.games),
+      total: result.total + catalog.length,
+      error: catalogError ?? result.error
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (catalog.length > 0) {
+      return {
+        games: catalog,
+        total: catalog.length,
+        offset: 0,
+        size,
+        hasMore: false,
+        region: region.code,
+        error: catalogError ?? `PlayStation Store unavailable: ${message}`
+      };
+    }
+    throw error;
+  }
+}
 function registerIpc(getWindow2) {
   electron.ipcMain.handle("app:info", () => appInfo());
+  electron.ipcMain.handle("app:displays", () => {
+    const primaryId = electron.screen.getPrimaryDisplay().id;
+    return electron.screen.getAllDisplays().map((display, index) => ({
+      id: display.id,
+      label: display.label || `Display ${index + 1}`,
+      width: Math.round(display.size.width * display.scaleFactor),
+      height: Math.round(display.size.height * display.scaleFactor),
+      refreshRate: display.displayFrequency,
+      scaleFactor: display.scaleFactor,
+      primary: display.id === primaryId
+    }));
+  });
   electron.ipcMain.handle("dialog:selectFolder", async () => {
     const win = getWindow2();
     const options = { properties: ["openDirectory", "createDirectory"] };
@@ -2207,7 +4269,12 @@ function registerIpc(getWindow2) {
     const win = getWindow2();
     const options = {
       properties: ["openFile"],
-      filters: [{ name: "PS5 dump archive", extensions: ["zip", "rar", "7z"] }]
+      filters: [
+        {
+          name: "PS5 dump archive",
+          extensions: ["zip", "rar", "7z", "tar", "tgz", "tar.gz", "tar.xz", "gz", "xz"]
+        }
+      ]
     };
     const result = win ? await electron.dialog.showOpenDialog(win, options) : await electron.dialog.showOpenDialog(options);
     return result.canceled ? null : result.filePaths[0];
@@ -2219,6 +4286,26 @@ function registerIpc(getWindow2) {
   electron.ipcMain.handle("game:remove", async (_e, id) => {
     await removeGame(id);
     return { ok: true };
+  });
+  electron.ipcMain.handle(
+    "game:setGraphics",
+    (_e, id, patch) => setGameGraphics(id, patch)
+  );
+  electron.ipcMain.handle(
+    "game:setCompatibility",
+    (_e, id, patch) => setGameCompatibility(id, patch)
+  );
+  electron.ipcMain.handle("game:trophyPackage", async (_e, id) => {
+    const game = await getGame(id);
+    if (!game) throw new Error("Game not found in library.");
+    return readTrophyPackages(game.installPath);
+  });
+  electron.ipcMain.handle("game:clearShaderCache", (_e, id) => clearShaderCache(id));
+  electron.ipcMain.handle("game:session", (_e, id) => readSession(id));
+  electron.ipcMain.handle("game:performance", async (_e, id) => {
+    const game = await getGame(id);
+    if (!game) throw new Error("Game not found in library.");
+    return readPerformanceProfile(game);
   });
   electron.ipcMain.handle("install:start", (_e, req) => {
     const jobId = crypto.randomUUID();
@@ -2248,8 +4335,69 @@ function registerIpc(getWindow2) {
     dismissWhatsNew();
     return { ok: true };
   });
-  electron.ipcMain.handle("app:openExternal", async (_e, url) => {
-    if (/^https?:\/\//i.test(url)) await electron.shell.openExternal(url);
+  electron.ipcMain.handle("app:openExternal", async (_e, url2) => {
+    if (/^https?:\/\//i.test(url2)) await electron.shell.openExternal(url2);
+  });
+  electron.ipcMain.handle("app:openDisplaySettings", async () => {
+    if (process.platform === "win32") await electron.shell.openExternal("ms-settings:display");
+  });
+  electron.ipcMain.handle("store:regions", () => STORE_REGIONS);
+  electron.ipcMain.handle("store:settings:get", () => getStoreSettings());
+  electron.ipcMain.handle("store:settings:set", async (_e, patch) => {
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "catalogUrl")) invalidateCatalog();
+    return updateStoreSettings(patch);
+  });
+  electron.ipcMain.handle("store:browse", (_e, query) => storeQuery(query ?? {}));
+  electron.ipcMain.handle("store:search", (_e, query) => storeQuery(query ?? {}));
+  electron.ipcMain.handle("store:featured", async () => {
+    const settings = await getStoreSettings();
+    const region = regionFor(settings);
+    let catalog = [];
+    try {
+      catalog = await loadCatalog(settings);
+    } catch {
+    }
+    const featured = await featuredPsn(region).catch(() => []);
+    return mergeCatalog(catalog.slice(0, 6), featured).slice(0, 10);
+  });
+  electron.ipcMain.handle("store:library:list", () => listStoreEntries());
+  electron.ipcMain.handle("store:add", (_e, game) => addStoreEntry(game));
+  electron.ipcMain.handle("store:remove", (_e, id) => removeStoreEntry(id));
+  electron.ipcMain.handle(
+    "store:setDownload",
+    (_e, id, url2) => setStoreDownloadUrl(id, url2)
+  );
+  electron.ipcMain.handle("store:download", async (_e, id, url2) => {
+    const entry = await getStoreEntry(id);
+    if (!entry) throw new Error("Add this game to your library first.");
+    const candidate = url2?.trim() ?? "";
+    if (candidate) await setStoreDownloadUrl(id, candidate);
+    const target = (candidate || entry.game.downloadUrl || "").trim();
+    if (!target) {
+      throw new Error("This game has no download URL. Attach one you host, or install from a file.");
+    }
+    const jobId = crypto.randomUUID();
+    const send = (progress) => {
+      getWindow2()?.webContents.send("store:progress", progress);
+    };
+    startStoreDownload(entry.game, target, jobId, send).catch(() => {
+    });
+    return { jobId };
+  });
+  electron.ipcMain.handle("store:installLocal", async (_e, id, sourcePath) => {
+    const entry = await getStoreEntry(id);
+    if (!entry) throw new Error("Add this game to your library first.");
+    const jobId = crypto.randomUUID();
+    const send = (progress) => {
+      getWindow2()?.webContents.send("store:progress", progress);
+    };
+    startStoreLocalInstall(entry.game, sourcePath, jobId, send).catch(() => {
+    });
+    return { jobId };
+  });
+  electron.ipcMain.handle("store:cancel", (_e, jobId) => {
+    cancelStoreDownload(jobId);
+    return { ok: true };
   });
 }
 electron.protocol.registerSchemesAsPrivileged([
@@ -2421,8 +4569,8 @@ function buildMenu() {
 function registerMediaProtocol() {
   electron.protocol.handle("media", async (request) => {
     try {
-      const url = new URL(request.url);
-      const rel = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+      const url2 = new URL(request.url);
+      const rel = decodeURIComponent(url2.pathname).replace(/^\/+/, "");
       const [id, ...rest] = rel.split("/").filter(Boolean);
       if (!id || rest.length === 0) return new Response("not found", { status: 404 });
       const game = await getGame(id);

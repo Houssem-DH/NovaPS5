@@ -1,7 +1,15 @@
 import { promises as fsp } from 'fs'
 import path from 'path'
 import { libraryFile, ensureDir, gamesRoot } from './paths'
-import type { Game, LibraryData } from '@shared/types'
+import { normalizeGameCompatibility, normalizeGameGraphics } from '@shared/types'
+import type {
+  ClearShaderCacheResult,
+  Game,
+  GameCompatibility,
+  GameGraphics,
+  LibraryData
+} from '@shared/types'
+import { setTrophyDataMode } from './trophy'
 
 let cache: LibraryData | null = null
 
@@ -66,8 +74,17 @@ export async function getGame(id: string): Promise<Game | undefined> {
 export async function addGame(game: Game): Promise<void> {
   const data = await load()
   const index = data.games.findIndex((g) => g.id === game.id)
-  if (index >= 0) data.games[index] = game
-  else data.games.push(game)
+  if (index >= 0) {
+    const previous = data.games[index]
+    // A re-install replaces the entry but must not silently discard the
+    // user's launch settings or play history.
+    game.graphics ??= previous.graphics
+    game.compatibility ??= previous.compatibility
+    game.lastPlayedAt ??= previous.lastPlayedAt
+    data.games[index] = game
+  } else {
+    data.games.push(game)
+  }
   await persist()
 }
 
@@ -88,6 +105,59 @@ export async function touchPlay(id: string): Promise<void> {
   if (game) {
     game.lastPlayedAt = Date.now()
     await persist()
+  }
+}
+
+/** Merge per-game AnyPS5 runtime settings into the library entry. */
+export async function setGameGraphics(
+  id: string,
+  patch: Partial<GameGraphics>
+): Promise<Game> {
+  const data = await load()
+  const game = data.games.find((g) => g.id === id)
+  if (!game) throw new Error('Game not found in library.')
+  game.graphics = normalizeGameGraphics({ ...(game.graphics ?? {}), ...patch })
+  await persist()
+  return game
+}
+
+/**
+ * Merge per-game compatibility workarounds. The trophy mode changes files in
+ * the install (`.ucp` <-> `.ucp.disabled`), so apply that before saving: a
+ * folder we cannot write must not look like it is in the new mode.
+ */
+export async function setGameCompatibility(
+  id: string,
+  patch: Partial<GameCompatibility>
+): Promise<Game> {
+  const data = await load()
+  const game = data.games.find((g) => g.id === id)
+  if (!game) throw new Error('Game not found in library.')
+  const compatibility = normalizeGameCompatibility({
+    ...(game.compatibility ?? {}),
+    ...patch
+  })
+  const applied = await setTrophyDataMode(game.installPath, compatibility.trophyData)
+  if (applied.error) throw new Error(applied.error)
+  game.compatibility = compatibility
+  await persist()
+  return game
+}
+
+/** Remove a game's shader/pipeline cache; AnyPS5 rebuilds it next launch. */
+export async function clearShaderCache(id: string): Promise<ClearShaderCacheResult> {
+  const game = await getGame(id)
+  if (!game) return { ok: false, error: 'Game not found in library.' }
+  const dir = path.join(game.installPath, 'shader_cache')
+  try {
+    const freedBytes = await dirSize(dir)
+    await fsp.rm(dir, { recursive: true, force: true })
+    return { ok: true, freedBytes }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    }
   }
 }
 
@@ -187,16 +257,24 @@ export async function scanLibrary(): Promise<{ games: Game[]; summary: ScanSumma
   for (const game of data.games) {
     const exeOk = await exists(game.exePath)
     const dirOk = await exists(game.installPath)
-    if (exeOk) {
+    // A game deliberately registered as "Conversion failed" stays Not working
+    // until it is reinstalled — even if the converter left a partial exe on
+    // disk, that build is not playable.
+    const conversionFailure =
+      game.status === 'error' && !!game.error?.startsWith('Conversion failed')
+    if (exeOk && !conversionFailure) {
       if (game.status !== 'ready' || game.error) {
         game.status = 'ready'
         delete game.error
         summary.repaired++
       }
     } else {
-      const detail = dirOk
-        ? 'The game executable is missing — reinstall the game.'
-        : 'The install folder is gone.'
+      const detail =
+        conversionFailure && dirOk
+          ? (game.error as string)
+          : dirOk
+            ? 'The game executable is missing — reinstall the game.'
+            : 'The install folder is gone.'
       if (game.status !== 'error' || game.error !== detail) {
         game.status = 'error'
         game.error = detail

@@ -126,6 +126,11 @@ export function gamesRoot(): string {
   return path.join(libraryRoot(), 'games')
 }
 
+/** Where store downloads are staged before conversion. */
+export function downloadsRoot(): string {
+  return path.join(libraryRoot(), 'downloads')
+}
+
 export function runtimeRepo(): string {
   return loadConfig().runtimeRepo || DEFAULT_RUNTIME_REPO
 }

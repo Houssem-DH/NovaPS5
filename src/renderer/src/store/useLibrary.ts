@@ -1,7 +1,45 @@
 import { create } from 'zustand'
-import type { AppInfo, Game, InstallProgress, LibraryScanResult, UpdateState, WhatsNew } from '@shared/types'
+import type {
+  AppInfo,
+  ClearShaderCacheResult,
+  Game,
+  GameCompatibility,
+  GameGraphics,
+  InstallProgress,
+  LibraryScanResult,
+  UpdateState,
+  WhatsNew
+} from '@shared/types'
 
-export type View = 'library' | 'settings'
+export type View = 'library' | 'store' | 'settings'
+
+/**
+ * The preload script is only evaluated when a window is created. If the app was
+ * left running while `src/preload` changed, the renderer can be newer than the
+ * bridge it is talking to. Fail with an actionable message instead of a raw
+ * "window.api.setGameGraphics is not a function".
+ */
+function graphicsApi(): typeof window.api {
+  if (
+    typeof window.api?.setGameGraphics !== 'function' ||
+    typeof window.api?.setGameCompatibility !== 'function' ||
+    typeof window.api?.trophyPackage !== 'function' ||
+    typeof window.api?.clearShaderCache !== 'function' ||
+    typeof window.api?.session !== 'function' ||
+    typeof window.api?.performance !== 'function' ||
+    typeof window.api?.displays !== 'function'
+  ) {
+    throw new Error(
+      'NovaPS5 is running an older preload script. Fully quit and restart the app (in development, stop and restart `npm run dev`) to load the game settings API.'
+    )
+  }
+  return window.api
+}
+
+/** The same stale-preload check for components that only read graphics data. */
+export function graphicsBridge(): typeof window.api {
+  return graphicsApi()
+}
 
 interface LibraryState {
   games: Game[]
@@ -30,6 +68,9 @@ interface LibraryState {
   setBootstrapped: (bootstrapped: boolean) => void
   launch: (id: string) => Promise<{ ok: boolean; error?: string }>
   remove: (id: string) => Promise<void>
+  setGraphics: (id: string, patch: Partial<GameGraphics>) => Promise<Game>
+  setCompatibility: (id: string, patch: Partial<GameCompatibility>) => Promise<Game>
+  clearShaderCache: (id: string) => Promise<ClearShaderCacheResult>
   setUpdate: (state: UpdateState) => void
   setUpdateOpen: (open: boolean) => void
   checkUpdates: () => Promise<void>
@@ -39,7 +80,7 @@ interface LibraryState {
   dismissWhatsNew: () => Promise<void>
 }
 
-export const useLibrary = create<LibraryState>((set, get) => ({
+export const useLibrary = create<LibraryState>((set) => ({
   games: [],
   loading: true,
   appInfo: null,
@@ -94,8 +135,25 @@ export const useLibrary = create<LibraryState>((set, get) => ({
       selectedId: state.selectedId === id ? null : state.selectedId,
       view: state.selectedId === id ? 'library' : state.view
     }))
-    void get()
   },
+
+  setGraphics: async (id, patch) => {
+    const updated = await graphicsApi().setGameGraphics(id, patch)
+    set((state) => ({
+      games: state.games.map((game) => (game.id === id ? updated : game))
+    }))
+    return updated
+  },
+
+  setCompatibility: async (id, patch) => {
+    const updated = await graphicsApi().setGameCompatibility(id, patch)
+    set((state) => ({
+      games: state.games.map((game) => (game.id === id ? updated : game))
+    }))
+    return updated
+  },
+
+  clearShaderCache: (id) => graphicsApi().clearShaderCache(id),
 
   setUpdate: (update) => set({ update }),
   setUpdateOpen: (updateOpen) => set({ updateOpen }),

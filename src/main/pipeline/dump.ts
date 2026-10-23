@@ -12,27 +12,71 @@ export function looksLikeDump(dir: string): boolean {
   return fs.existsSync(path.join(dir, 'eboot.bin')) || fs.existsSync(path.join(dir, 'sce_sys'))
 }
 
-/**
- * Find the dump root. Archives and some dumps nest the actual content one or
- * two folders deep, so search a few levels for a directory that has eboot.bin.
- */
-export async function locateDumpRoot(dir: string, depth = 0): Promise<string | null> {
-  if (depth > 4) return null
-  if (looksLikeDump(dir)) return dir
+// Patch/update trees often sit beside the base game in the same archive. They
+// contain a sce_sys/ too, so they must never win over the real dump root.
+const PENALIZED_ROOT = /(^|[\\/])(update|updates|patch|patches|dlc|bonus|preorder)([\\/]|$)/i
+
+interface RootCandidate {
+  path: string
+  score: number
+  hasEboot: boolean
+}
+
+async function findDumpRoot(dir: string, depth: number, maxDepth: number): Promise<RootCandidate | null> {
+  if (depth > maxDepth) return null
+  const hasEboot = fs.existsSync(path.join(dir, 'eboot.bin'))
+  const hasSceSys = fs.existsSync(path.join(dir, 'sce_sys'))
+  const penalty = PENALIZED_ROOT.test(dir) ? 100 : 0
+
+  // A directory with eboot.bin is a complete root — no need to search inside
+  // it (and doing so would be expensive for a 100 GB dump).
+  if (hasEboot) return { path: dir, score: 1000 - depth - penalty, hasEboot }
 
   let entries: import('fs').Dirent[]
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true })
   } catch {
-    return null
+    return hasSceSys ? { path: dir, score: 100 - depth - penalty, hasEboot } : null
   }
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      const found = await locateDumpRoot(path.join(dir, entry.name), depth + 1)
-      if (found) return found
-    }
+
+  const children = entries
+    .filter(
+      (entry) =>
+        entry.isDirectory() &&
+        entry.name !== 'sce_sys' &&
+        entry.name !== '__MACOSX' &&
+        !entry.name.startsWith('.')
+    )
+    // Search the base game before update/patch trees, then alphabetically so
+    // the choice is deterministic across filesystems.
+    .sort(
+      (a, b) =>
+        Number(PENALIZED_ROOT.test(a.name)) - Number(PENALIZED_ROOT.test(b.name)) ||
+        a.name.localeCompare(b.name)
+    )
+
+  let best: RootCandidate | null = hasSceSys
+    ? { path: dir, score: 100 - depth - penalty, hasEboot }
+    : null
+
+  for (const entry of children) {
+    const found = await findDumpRoot(path.join(dir, entry.name), depth + 1, maxDepth)
+    if (!found) continue
+    // Prefer the first unpenalized complete root.
+    if (found.hasEboot && !PENALIZED_ROOT.test(found.path)) return found
+    if (!best || found.score > best.score) best = found
   }
-  return null
+  return best
+}
+
+/**
+ * Find the dump root. Archives and some dumps nest the actual content one or
+ * two folders deep, so search a few levels for a directory with eboot.bin.
+ * Update/patch folders are searched last and never beat a base game.
+ */
+export async function locateDumpRoot(dir: string, depth = 0): Promise<string | null> {
+  const found = await findDumpRoot(dir, depth, 6)
+  return found?.path ?? null
 }
 
 /** Read a PS4/PS5 param.sfo (binary PSF) into a flat key → value map. */
@@ -63,6 +107,11 @@ function parseParamSfo(buffer: Buffer): Record<string, string> {
   return out
 }
 
+/** "Game.zip" / "Game.tar.gz" → "Game", for archives with no title metadata. */
+export function sourceFallbackName(sourcePath: string): string {
+  return path.basename(sourcePath).replace(/\.(zip|rar|7z|tar|tgz|tar\.gz|tar\.xz)$/i, '')
+}
+
 /** Extract the title name, title id, and cover presence from sce_sys. */
 export async function readMeta(
   sourceDir: string
@@ -91,49 +140,133 @@ export async function readMeta(
     try {
       const sfo = parseParamSfo(await fsp.readFile(path.join(sourceDir, 'sce_sys', 'param.sfo')))
       if (!titleId && sfo.TITLE_ID?.trim()) titleId = sfo.TITLE_ID.trim()
-      if (name === path.basename(sourceDir) && sfo.TITLE?.trim()) name = sfo.TITLE.trim()
+      if (name === path.basename(sourceDir)) {
+        const localized = Object.entries(sfo).find(
+          ([key, value]) => /^TITLE_[A-Z]{2}$/i.test(key) && value.trim()
+        )?.[1]
+        const title = sfo.TITLE?.trim() || localized?.trim()
+        if (title) name = title
+      }
     } catch {
       // no / unreadable param.sfo either — folder name stays
     }
   }
 
-  try {
-    await fsp.access(path.join(sourceDir, 'sce_sys', 'icon0.png'))
-    hasCover = true
-  } catch {
-    /* no cover art */
+  for (const candidate of ['icon0.png', 'pic0.png', 'pic1.png']) {
+    try {
+      await fsp.access(path.join(sourceDir, 'sce_sys', candidate))
+      hasCover = true
+      break
+    } catch {
+      /* try the next artwork file */
+    }
   }
 
   return { name, titleId, hasCover }
 }
 
 /**
- * Extract a dump archive (.zip, .rar, .7z) using the Windows bsdtar —
- * libarchive-based, so all three formats work with the same invocation.
+ * Extract a dump archive (.zip, .rar, .7z, .tar…) using the Windows bsdtar —
+ * libarchive-based, so the common formats work with the same invocation.
+ * Plain ZIPs fall back to PowerShell when tar is missing or rejects the file
+ * (older Windows builds, unusual ZIP features).
  */
 async function extractArchive(archive: string, dest: string): Promise<void> {
   await fsp.mkdir(dest, { recursive: true })
-  const { code, stderr } = await run('tar', ['-xf', archive, '-C', dest], {
-    timeoutMs: 30 * 60 * 1000
-  })
-  if (code !== 0) {
-    throw new Error(`Could not extract the archive — ${stderr.trim() || `tar exited with code ${code}`}`)
+  let detail = ''
+
+  try {
+    const result = await run('tar', ['-xf', archive, '-C', dest], {
+      timeoutMs: 30 * 60 * 1000
+    })
+    if (result.code === 0 && !result.timedOut) return
+    detail = result.timedOut
+      ? 'extraction timed out after 30 minutes'
+      : result.stderr.trim() || `tar exited with code ${result.code}`
+  } catch (error) {
+    detail = error instanceof Error ? error.message : String(error)
   }
+
+  if (process.platform === 'win32' && /\.zip$/i.test(archive)) {
+    const esc = (p: string): string => p.replace(/'/g, "''")
+    try {
+      const result = await run(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-Command',
+          `Expand-Archive -LiteralPath '${esc(archive)}' -DestinationPath '${esc(dest)}' -Force`
+        ],
+        { timeoutMs: 30 * 60 * 1000 }
+      )
+      if (result.code === 0 && !result.timedOut) return
+      detail = result.stderr.trim() || detail
+    } catch (error) {
+      detail = error instanceof Error ? error.message : detail
+    }
+  }
+
+  if (/no space left|not enough space|disk full|ENOSPC/i.test(detail)) {
+    throw new Error(
+      `Not enough free space to extract "${path.basename(archive)}" — archives are unpacked to the system temp folder (${app.getPath('temp')}) first. Free space on that drive, or extract the archive yourself and import the folder.`
+    )
+  }
+  if (/passphrase|password|encrypted/i.test(detail)) {
+    throw new Error(
+      `The archive is password-protected — extract "${path.basename(archive)}" first, then import the folder.`
+    )
+  }
+  if (/unrecognized archive format|not supported|unsupported/i.test(detail)) {
+    throw new Error(
+      `The archive format could not be read — extract "${path.basename(archive)}" with an archive tool, then import the extracted folder.`
+    )
+  }
+  throw new Error(
+    `Could not extract "${path.basename(archive)}" — ${detail || 'the extractor produced no output'}`
+  )
 }
 
 /**
- * Resolve a user-supplied path (folder or .zip/.rar/.7z archive) to a dump
- * root. If an archive was extracted, `tempDir` holds the extraction directory
- * and the caller must delete it when finished.
+ * Resolve a user-supplied path (folder or archive) to a dump root. If an
+ * archive was extracted, `tempDir` holds the extraction directory and the
+ * caller must delete it when finished.
  */
 export async function resolveSource(
   sourcePath: string
 ): Promise<{ root: string; tempDir: string | null }> {
-  if (/\.(zip|rar|7z)$/i.test(sourcePath)) {
-    const tempDir = path.join(app.getPath('temp'), `ps5lib-${Date.now()}-${Math.floor(Math.random() * 1e6)}`)
-    await extractArchive(sourcePath, tempDir)
+  if (!fs.existsSync(sourcePath)) {
+    throw new Error(`The selected source no longer exists: ${sourcePath}`)
+  }
+  if (/\.(zip|rar|7z|tar|tgz|tar\.gz|tar\.xz)$/i.test(sourcePath)) {
+    const tempDir = path.join(
+      app.getPath('temp'),
+      `ps5lib-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+    )
+    try {
+      await extractArchive(sourcePath, tempDir)
+    } catch (error) {
+      // Never leave a half-extracted archive behind when the import fails.
+      await fsp.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+      throw error
+    }
     const root = (await locateDumpRoot(tempDir)) ?? tempDir
     return { root, tempDir }
+  }
+  // A file that is not an archive cannot be a dump root. Say so directly
+  // instead of walking it and reporting "no eboot.bin".
+  let sourceIsFile = false
+  try {
+    sourceIsFile = (await fsp.stat(sourcePath)).isFile()
+  } catch {
+    // missing path — locateDumpRoot/install will report it
+  }
+  if (sourceIsFile) {
+    throw new Error(
+      `"${path.basename(sourcePath)}" is not a supported archive — use .zip, .rar, .7z, .tar, .tar.gz, or .tar.xz.`
+    )
   }
   const root = (await locateDumpRoot(sourcePath)) ?? sourcePath
   return { root, tempDir: null }
@@ -152,6 +285,12 @@ export async function detectDump(sourcePath: string): Promise<DetectResult> {
     }
 
     const meta = await readMeta(root)
+    // Archived dumps have a random temp-folder name; when no title metadata
+    // exists, the archive's own name is far more useful than "ps5lib-…".
+    const displayName =
+      resolved.tempDir && meta.name === path.basename(root)
+        ? sourceFallbackName(sourcePath)
+        : meta.name
     // Full-tree size (unwrap backups excluded) — dumps differ in layout, so
     // don't assume a fixed set of folders.
     let sizeBytes = 0
@@ -165,7 +304,7 @@ export async function detectDump(sourcePath: string): Promise<DetectResult> {
 
     return {
       isDump: true,
-      name: meta.name,
+      name: displayName,
       titleId: meta.titleId,
       hasCover: meta.hasCover,
       sizeBytes,

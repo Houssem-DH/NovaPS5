@@ -26,7 +26,8 @@ export async function dirSize(target: string): Promise<number> {
  * Recursively copy a directory, invoking `onBytes` with each file's size as it
  * is copied so the caller can report progress. Symlinked files/folders are
  * copied by content (dumps repacked by archivers occasionally contain them);
- * unreadable entries are skipped rather than failing the whole install.
+ * broken links are skipped, but a locked or unreadable file fails with the
+ * exact path instead of silently producing a broken install.
  */
 export async function copyDir(
   src: string,
@@ -44,16 +45,29 @@ export async function copyDir(
       await copyDir(from, to, onBytes, depth + 1)
       continue
     }
-    try {
-      const followed = await fsp.stat(from) // follows symlinks
-      if (followed.isDirectory()) {
-        await copyDir(from, to, onBytes, depth + 1)
-      } else {
-        await fsp.copyFile(from, to)
-        onBytes(followed.size)
+    // Antivirus/indexers can hold a freshly extracted file open for a moment;
+    // retry a couple of times before giving up with the exact path.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const followed = await fsp.stat(from) // follows symlinks
+        if (followed.isDirectory()) {
+          await copyDir(from, to, onBytes, depth + 1)
+        } else {
+          await fsp.copyFile(from, to)
+          onBytes(followed.size)
+        }
+        break
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        // Broken links / entries that vanished mid-copy are harmless.
+        if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR') break
+        if (attempt < 2 && (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES')) {
+          await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)))
+          continue
+        }
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(`Could not copy "${from}" — ${detail}`)
       }
-    } catch {
-      // e.g. a broken link inside the dump — skip it, keep installing.
     }
   }
 }
